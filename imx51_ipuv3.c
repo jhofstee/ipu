@@ -254,6 +254,8 @@ ipu3_fb_probe(device_t dev)
 {
 	int error;
 
+	uprintf("ipu3_fb_probe\n");
+
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
@@ -282,14 +284,17 @@ ipu3_fb_attach(device_t dev)
 	int err;
 	uintptr_t base;
 
+	uprintf("ipu3_fb_attach...\n");
+
 	if (ipu3sc_softc)
 		return (ENXIO);
 
 	ipu3sc_softc = sc;
 
-	if (bootverbose)
-		device_printf(dev, "clock gate status is %d\n",
-		    imx51_get_clk_gating(IMX51CLK_IPU_HSP_CLK_ROOT));
+	// FIXME
+	//if (bootverbose)
+	//	device_printf(dev, "clock gate status is %d\n",
+	//	    imx51_get_clk_gating(IMX51CLK_IPU_HSP_CLK_ROOT));
 
 	sc->dev = dev;
 
@@ -416,14 +421,24 @@ fail_retarn_cm:
 	return (err);
 }
 
+static int
+ipu3_fb_detach(device_t dev)
+{
+	uprintf("ipu3_fb_detach...\n");
+
+	// XXX cleanup
+	return (0);
+}
+
 static device_method_t ipu3_fb_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		ipu3_fb_probe),
 	DEVMETHOD(device_attach,	ipu3_fb_attach),
-
+	DEVMETHOD(device_detach,        ipu3_fb_detach),
 	{ 0, 0 }
 };
 
+// Empty class
 static devclass_t ipu3_fb_devclass;
 
 static driver_t ipu3_fb_driver = {
@@ -432,8 +447,11 @@ static driver_t ipu3_fb_driver = {
 	sizeof(struct ipu3sc_softc),
 };
 
+// likely this is tiggered on kldload
+// add ipu3fb to simples implemented by  ipu3_fb_driver which is a ipu3_fb_devclass?
 DRIVER_MODULE(ipu3fb, simplebus, ipu3_fb_driver, ipu3_fb_devclass, 0, 0);
 
+#if 0
 /*
  * Video driver routines and glue.
  */
@@ -504,8 +522,10 @@ static video_switch_t ipu3fbvidsw = {
 	.putm			= ipu3fb_putm,
 };
 
+// Hook into ....?
 VIDEO_DRIVER(ipu3fb, ipu3fbvidsw, ipu3fb_configure);
 
+// console registration ?
 extern sc_rndr_sw_t txtrndrsw;
 RENDERER(ipu3fb, 0, txtrndrsw, gfb_set);
 RENDERER_MODULE(ipu3fb, gfb_set);
@@ -538,6 +558,7 @@ ipu3fb_configure(int flags)
 static int
 ipu3fb_probe(int unit, video_adapter_t **adp, void *arg, int flags)
 {
+	uprintf("ipu3fb_probe");
 
 	return (0);
 }
@@ -547,6 +568,8 @@ ipu3fb_init(int unit, video_adapter_t *adp, int flags)
 {
 	struct video_adapter_softc *sc;
 	video_info_t *vi;
+
+	uprintf("ipu3fb_init\n");
 
 	sc = (struct video_adapter_softc *)adp;
 	vi = &adp->va_info;
@@ -894,4 +917,6 @@ dummy_kbd_configure(int flags)
 
 	return (0);
 }
-KEYBOARD_DRIVER(ipu3dummy, ipu3dummysw, dummy_kbd_configure);
+//KEYBOARD_DRIVER(ipu3dummy, ipu3dummysw, dummy_kbd_configure);
+#endif
+
