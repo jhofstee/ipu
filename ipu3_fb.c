@@ -121,18 +121,19 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 {
 	uint64_t w0sh96;
 	uint32_t w1sh96;
+	int dp = IMX_IPU_DP0;
 
 	/* FW W0[137:125] - 96 = [41:29] */
 	/* FH W0[149:138] - 96 = [53:42] */
-	w0sh96 = IPUV3_READ(sc, cpmem, CPMEM_OFFSET(IMX_IPU_DP1, 23, 0, 16));
-	w0sh96 <<= 32;
-	w0sh96 |= IPUV3_READ(sc, cpmem, CPMEM_OFFSET(IMX_IPU_DP1, 23, 0, 12));
+	//w0sh96 = IPUV3_READ(sc, cpmem, CPMEM_OFFSET(dp, 23, 0, 16));
+	//w0sh96 <<= 32;
+	//w0sh96 |= IPUV3_READ(sc, cpmem, CPMEM_OFFSET(dp, 23, 0, 12));
 
-	sc->sc_info.fb_width = ((w0sh96 >> 29) & 0x1fff) + 1;
-	sc->sc_info.fb_height = ((w0sh96 >> 42) & 0x0fff) + 1;
+	sc->sc_info.fb_width = 480; //((w0sh96 >> 29) & 0x1fff) + 1;
+	sc->sc_info.fb_height = 272; //((w0sh96 >> 42) & 0x0fff) + 1;
 
 	/* SLY W1[115:102] - 96 = [19:6] */
-	w1sh96 = IPUV3_READ(sc, cpmem, CPMEM_OFFSET(IMX_IPU_DP1, 23, 1, 12));
+	w1sh96 = IPUV3_READ(sc, cpmem, CPMEM_OFFSET(dp, 23, 1, 12));
 	sc->sc_info.fb_stride = ((w1sh96 >> 6) & 0x3fff) + 1;
 
 	printf("%dx%d [%d]\n", sc->sc_info.fb_width, sc->sc_info.fb_height,
@@ -144,11 +145,11 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 	sc->sc_info.fb_pbase = (intptr_t)vtophys(sc->sc_info.fb_vbase);
 
 	/* DP1 + config_ch_23 + word_2 */
-	IPUV3_WRITE(sc, cpmem, CPMEM_OFFSET(IMX_IPU_DP1, 23, 1, 0),
+	IPUV3_WRITE(sc, cpmem, CPMEM_OFFSET(dp, 23, 1, 0),
 	    (((uint32_t)sc->sc_info.fb_pbase >> 3) |
 	    (((uint32_t)sc->sc_info.fb_pbase >> 3) << 29)) & 0xffffffff);
 
-	IPUV3_WRITE(sc, cpmem, CPMEM_OFFSET(IMX_IPU_DP1, 23, 1, 4),
+	IPUV3_WRITE(sc, cpmem, CPMEM_OFFSET(dp, 23, 1, 4),
 	    (((uint32_t)sc->sc_info.fb_pbase >> 3) >> 3) & 0xffffffff);
 
 	/* XXX: fetch or set it from/to IPU. */
@@ -187,12 +188,38 @@ ipu3_fb_probe(device_t dev)
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
-	if (!ofw_bus_is_compatible(dev, "fsl,ipu3"))
+	if (!ofw_bus_is_compatible(dev, "fsl,ipu3") &&
+	    !ofw_bus_is_compatible(dev, "fsl,imx6q-ipu"))
 		return (ENXIO);
 
 	device_set_desc(dev, "i.MX5x Image Processing Unit v3 (FB)");
 
 	return (BUS_PROBE_DEFAULT);
+}
+
+static void test(struct ipu3sc_softc *sc)
+{
+        uint64_t w0sh96;
+        uint32_t w1sh96;
+        int dp = IMX_IPU_DP0;
+        int height;
+ 
+        /* FW W0[137:125] - 96 = [41:29] */
+        /* FH W0[149:138] - 96 = [53:42] */
+	uprintf("dp: offset %X\n", CPMEM_OFFSET(dp, 23, 0, 16));
+
+        w0sh96 = IPUV3_READ(sc, cpmem, CPMEM_OFFSET(dp, 23, 0, 16));
+        w0sh96 <<= 32;
+        w0sh96 |= IPUV3_READ(sc, cpmem, CPMEM_OFFSET(dp, 23, 0, 12));
+ 
+        sc->sc_info.fb_width = ((w0sh96 >> 29) & 0x1fff) + 1;
+        sc->sc_info.fb_height = ((w0sh96 >> 42) & 0x0fff) + 1;
+
+	// DI0 Screen Configuration Register (IPUx_DI0_SCR_CONF)
+	// Address: Base address + 4_0170h offset
+	height = IPUV3_READ(sc, di0, IPU_DI_SCR_CONF);
+
+	uprintf("size: %d %d\n", sc->sc_info.fb_width, height);
 }
 
 static int
@@ -208,9 +235,11 @@ ipu3_fb_attach(device_t dev)
 
 	ipu3sc_softc = sc;
 
+#if 0 // FIXME
 	if (bootverbose)
 		device_printf(dev, "clock gate status is %d\n",
 		    imx51_get_clk_gating(IMX51CLK_IPU_HSP_CLK_ROOT));
+#endif
 
 	sc->dev = dev;
 
@@ -225,10 +254,15 @@ ipu3_fb_attach(device_t dev)
 	 * On i.MX53, the offset is 0.
 	 */
 	node = ofw_bus_get_node(dev);
-	if ((OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0)
+	if ((OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0) {
 		base = 0;
-	else
+	} else {
+		uprintf("got reg %X %X %X\n", reg,  fdt32_to_cpu(reg), IPU_CM_BASE(0));
 		base = fdt32_to_cpu(reg) - IPU_CM_BASE(0);
+	}
+
+	uprintf("base %X %x\n", base, IPU_CM_BASE(base));
+
 	/* map controller registers */
 	err = bus_space_map(iot, IPU_CM_BASE(base), IPU_CM_SIZE, 0, &ioh);
 	if (err)
@@ -313,6 +347,11 @@ ipu3_fb_attach(device_t dev)
 	if (sc->sc_fbd == NULL)
 		device_printf(dev, "Can't attach fbd device\n");
 
+
+	test(sc);
+
+	//return -1;
+
 	return (bus_generic_attach(dev));
 
 fail_retarn_dctmpl:
@@ -345,10 +384,17 @@ ipu3_fb_getinfo(device_t dev)
 	return (&sc->sc_info);
 }
 
+static int
+ipu3_fb_detach(device_t dev)
+{
+	return (0);
+}
+
 static device_method_t ipu3_fb_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		ipu3_fb_probe),
 	DEVMETHOD(device_attach,	ipu3_fb_attach),
+	DEVMETHOD(device_detach,        ipu3_fb_detach),
 
 	/* Framebuffer service methods */
 	DEVMETHOD(fb_getinfo,		ipu3_fb_getinfo),
