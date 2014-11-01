@@ -103,12 +103,14 @@ __FBSDID("$FreeBSD$");
 
 #define	IMX51_IPU_HSP_CLOCK	665000000
 
-struct imx51_ipuv3_screen {
+struct ipuv3_screen {
 	//LIST_ENTRY(imx51_ipuv3_screen) link;
 
 	/* Frame buffer */
-	bus_dmamap_t dma;
-	bus_dma_segment_t segs[1];
+	// XXX move here from sc
+	bus_dmamap_t dma_map;
+	//bus_dma_segment_t segs[1];
+
 	int 	nsegs;
 	size_t  buf_size;
 	size_t  map_size;
@@ -117,7 +119,7 @@ struct imx51_ipuv3_screen {
 	int	stride;
 
 	/* DMA frame descriptor */
-	struct	ipuv3_dma_descriptor *dma_desc;
+	//struct	ipuv3_dma_descriptor *dma_desc;
 	//XXX
 	//paddr_t	dma_desc_pa;
 
@@ -162,10 +164,15 @@ struct ipu3sc_softc {
 	bus_space_handle_t	idmac_ioh;
 	bus_space_handle_t	cpmem_ioh;
 
-	struct lcd_panel_geometry *geometry;
 	bus_dma_tag_t		dma_tag;
+	//bus_dmamap_t		dma_map;
+	bus_addr_t		buf_base_phys;
+	uint32_t		*buf_base;
+	struct tcd_conf		*tcd;
+
 	// NOTE: only 1 for know
-	struct imx51_ipuv3_screen *screen;
+	struct lcd_panel_geometry *geometry;
+	struct ipuv3_screen *screen;
 };
 
 static struct ipu3sc_softc *ipu3sc_softc;
@@ -186,12 +193,19 @@ static struct ipu3sc_softc *ipu3sc_softc;
 #define	CPMEM_OFFSET(_dp, _ch, _w, _o)					\
 	    (CPMEM_CHANNEL((_dp), (_ch), (_w)) + (_o))
 
-static int ipu3_fb_probe(device_t);
-static int ipu3_fb_attach(device_t);
+#ifdef IPUV3_DEBUG
+#define dprintf uprintf
+#else
+#define dprintf(...)
+#endif
+
+
+static int ipuv3_fb_probe(device_t);
+static int ipuv3_fb_attach(device_t);
 static void ipuv3_set_idma_param(uint32_t *params, uint32_t name, uint32_t val);
-static void ipuv3_start_dma(struct ipu3sc_softc *sc, struct imx51_ipuv3_screen *scr);
+static void ipuv3_start_dma(struct ipu3sc_softc *sc, struct ipuv3_screen *scr);
 static int ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
-    struct imx51_ipuv3_screen **scrpp);
+    struct ipuv3_screen **scrpp);
 
 #define IPUV3_DEBUG
 
@@ -324,18 +338,14 @@ ipuv3_dc_map_conf(struct ipu3sc_softc *sc,
 	reg &= ~(0xFFFF << (16 * ((map * 3 + byte) & 0x1)));
 	reg |= ((offset << 8) | mask) << (16 * ((map * 3 + byte) & 0x1));
 	IPUV3_WRITE(sc, dc, addr, reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
-#endif
+	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
 
 	addr = IPU_DC_MAP_CONF_PNTR(map / 2);
 	reg = IPUV3_READ(sc, dc, addr);
 	reg &= ~(0x1F << ((16 * (map & 0x1)) + (5 * byte)));
 	reg |= ((map * 3) + byte) << ((16 * (map & 0x1)) + (5 * byte));
 	IPUV3_WRITE(sc, dc, addr, reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
-#endif
+	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
 }
 
 static void
@@ -353,15 +363,11 @@ ipuv3_dc_template_command(struct ipu3sc_softc *sc,
 	    (mapping << 15) |
 	    (operand << 20);
 	IPUV3_WRITE(sc, dctmpl, index * 8, reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8, reg);
-#endif
+	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8, reg);
 	reg = (opecode << 0) |
 	    (stop << 9);
 	IPUV3_WRITE(sc, dctmpl, index * 8 + 4, reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8 + 4, reg);
-#endif
+	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8 + 4, reg);
 }
 
 static void
@@ -376,12 +382,8 @@ ipuv3_set_routine_link(struct ipu3sc_softc *sc,
 	reg &= ~(0xFFFF << (16 * (evt & 0x1)));
 	reg |= ((addr << 8) | pri) << (16 * (evt & 0x1));
 	IPUV3_WRITE(sc, dc, IPU_DC_RL(base, evt), reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: event %d addr %d priority %d\n", __func__,
-	    evt, addr, pri);
-	uprintf("%s: %p = 0x%08X\n", __func__,
-	    (void *)IPU_DC_RL(base, evt), reg);
-#endif
+	dprintf("%s: event %d addr %d priority %d\n", __func__, evt, addr, pri);
+	dprintf("%s: %p = 0x%08X\n", __func__, (void *)IPU_DC_RL(base, evt), reg);
 }
 
 static void
@@ -467,18 +469,16 @@ ipuv3_di_sync_conf(struct ipu3sc_softc *sc, int no,
 	reg |= repeat << DI_STP_REP_SHIFT(no);
 	IPUV3_WRITE(sc, di0, IPU_DI_STP_REP(no), reg);
 
-#ifdef IPUV3_DEBUG
-	uprintf("%s: no %d\n", __func__, no);
-	uprintf("%s: addr 0x%08X reg_gen0   0x%08X\n", __func__,
+	dprintf("%s: no %d\n", __func__, no);
+	dprintf("%s: addr 0x%08X reg_gen0   0x%08X\n", __func__,
 	    IPU_DI_SW_GEN0(no), reg_gen0);
-	uprintf("%s: addr 0x%08X reg_gen1   0x%08X\n", __func__,
+	dprintf("%s: addr 0x%08X reg_gen1   0x%08X\n", __func__,
 	    IPU_DI_SW_GEN1(no), reg_gen1);
-	uprintf("%s: addr 0x%08X DI_STP_REP 0x%08X\n", __func__,
+	dprintf("%s: addr 0x%08X DI_STP_REP 0x%08X\n", __func__,
 	    IPU_DI_STP_REP(no), reg);
-#endif
 }
 
-#if 0
+#if 1
 /* Display interface */
 static void
 imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
@@ -490,13 +490,8 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
-#if NIMXCCM > 0
-	ipuclk = imx51_get_clock(IMX51CLK_IPU_HSP_CLK_ROOT);
-#elif !defined(IMX51_IPU_HSP_CLOCK)
-#error	IMX51_CPU_HSP_CLOCK need to be defined.
-#else
 	ipuclk = IMX51_IPU_HSP_CLOCK;
-#endif
+
 	uprintf("IPU HSP clock = %d\n", ipuclk);
 	div = (ipuclk * 16) / geom->pixel_clk;
 	div = div < 16 ? 16 : div & 0xff8;
@@ -510,30 +505,26 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 	IPUV3_WRITE(sc, di0, IPU_DI_BS_CLKGEN0, div);
 	IPUV3_WRITE(sc, di0, IPU_DI_BS_CLKGEN1,
 	    (div / 16) << DI_BS_CLKGEN1_DOWN_SHIFT);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: IPU_DI_BS_CLKGEN0 = 0x%08X\n", __func__,
+
+	dprintf("%s: IPU_DI_BS_CLKGEN0 = 0x%08X\n", __func__,
 	    IPUV3_READ(sc, di0, IPU_DI_BS_CLKGEN0));
-	uprintf("%s: IPU_DI_BS_CLKGEN1 = 0x%08X\n", __func__,
+	dprintf("%s: IPU_DI_BS_CLKGEN1 = 0x%08X\n", __func__,
 	    IPUV3_READ(sc, di0, IPU_DI_BS_CLKGEN1));
-#endif
+
 	/* Display Time settings */
 	reg = ((div / 16 - 1) << DI_DW_GEN_ACCESS_SIZE_SHIFT) |
 	    ((div / 16 - 1) << DI_DW_GEN_COMPONNENT_SIZE_SHIFT) |
 	    (3 << DI_DW_GEN_PIN_SHIFT(15));
 	IPUV3_WRITE(sc, di0, IPU_DI_DW_GEN(0), reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: div = %d\n", __func__, div);
-	uprintf("%s: IPU_DI_DW_GEN(0) 0x%08X = 0x%08X\n", __func__,
+	dprintf("%s: div = %d\n", __func__, div);
+	dprintf("%s: IPU_DI_DW_GEN(0) 0x%08X = 0x%08X\n", __func__,
 	    IPU_DI_DW_GEN(0), reg);
-#endif
 
 	/* Up & Down Data Wave Set */
 	reg = (div / 16 * 2) << DI_DW_SET_DOWN_SHIFT;
 	IPUV3_WRITE(sc, di0, IPU_DI_DW_SET(0, 3), reg);
-#ifdef IPUV3_DEBUG
-	uprintf("%s: IPU_DI_DW_SET(0, 3) 0x%08X = 0x%08X\n", __func__,
+	dprintf("%s: IPU_DI_DW_SET(0, 3) 0x%08X = 0x%08X\n", __func__,
 	    IPU_DI_DW_SET(0, 3), reg);
-#endif
 
 	/* internal HSCYNC */
 	ipuv3_di_sync_conf(sc, 1,
@@ -615,29 +606,25 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 }
 #endif
 
-#if 0
+#if 1
 void
-imx51_ipuv3_geometry(struct ipu3sc_softc *sc,
+ipuv3_geometry(struct ipu3sc_softc *sc,
     const struct lcd_panel_geometry *geom)
 {
 	uprintf("%s : %d\n", __func__, __LINE__);
 
 	sc->geometry = geom;
 
-#ifdef IPUV3_DEBUG
-	uprintf("%s: screen height = %d\n",__func__ , geom->panel_height);
-	uprintf("%s:        width  = %d\n",__func__ , geom->panel_width);
-	uprintf("%s: IPU Clock = %d\n", __func__,
-	    imx51_get_clock(IMX51CLK_IPU_HSP_CLK_ROOT));
-	uprintf("%s: Pixel Clock = %d\n", __func__, geom->pixel_clk);
-#endif
+	dprintf("%s: screen height = %d\n",__func__ , geom->panel_height);
+	dprintf("%s:        width  = %d\n",__func__ , geom->panel_width);
+	dprintf("%s: IPU Clock = %d\n", __func__,
+	    imx51_get_clock(IMX51CLK_IPU_HSP_CLK_ROOT)); // XXX?
+	dprintf("%s: Pixel Clock = %d\n", __func__, geom->pixel_clk);
 
 	imx51_ipuv3_di_init(sc);
 
-#ifdef IPUV3_DEBUG
-	uprintf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
+	dprintf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
 	    IPUV3_READ(sc, cm, IPU_CM_DISP_GEN));
-#endif
 
 	imx51_ipuv3_dc_display_config(sc, geom->panel_width);
 
@@ -648,7 +635,7 @@ imx51_ipuv3_geometry(struct ipu3sc_softc *sc,
 /*
  * Initialize the IPUV3 controller.
  */
-#if 0
+#if 1
 static void
 ipuv3_initialize(struct ipu3sc_softc *sc,
     const struct lcd_panel_geometry *geom)
@@ -667,7 +654,7 @@ ipuv3_initialize(struct ipu3sc_softc *sc,
 	ipuv3_dmfc_init(sc);
 	imx51_ipuv3_dc_init(sc);
 
-	imx51_ipuv3_geometry(sc, geom);
+	ipuv3_geometry(sc, geom);
 
 	/* set global alpha */
 	IPUV3_WRITE(sc, dp, IPU_DP_GRAPH_WIND_CTRL_SYNC, 0x80 << 24);
@@ -884,7 +871,7 @@ ipuv3_write_dmaparam(struct ipu3sc_softc *sc,
 
 static void
 ipuv3_build_param(struct ipu3sc_softc *sc,
-    struct imx51_ipuv3_screen *scr,
+    struct ipuv3_screen *scr,
     uint32_t *params)
 {
 	const struct lcd_panel_geometry *geom = sc->geometry;
@@ -895,10 +882,12 @@ ipuv3_build_param(struct ipu3sc_softc *sc,
 	    (geom->panel_width - 1));
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_FH,
 	    (geom->panel_height - 1));
+#ifdef DMA_FIXED
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA0,
 	    scr->segs[0].ds_addr >> 3);
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA1,
 	    scr->segs[0].ds_addr >> 3);
+#endif
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_SL,
 	    (scr->stride - 1));
 
@@ -981,9 +970,9 @@ ipuv3_set_idma_param(uint32_t *params, uint32_t name, uint32_t val)
  * Enable DMA to cause the display to be refreshed periodically.
  * This brings the screen to life...
  */
-void
+static void
 ipuv3_start_dma(struct ipu3sc_softc *sc,
-    struct imx51_ipuv3_screen *scr)
+    struct ipuv3_screen *scr)
 {
 	//int save;
 	uint32_t params[10];
@@ -1043,19 +1032,32 @@ ipuv3_stop_dma(struct ipu3sc_softc *sc)
 	return;
 }
 
+static void
+sai_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
+{
+	bus_addr_t *addr;
+
+	if (err)
+		return;
+
+	addr = (bus_addr_t*)arg;
+	*addr = segs[0].ds_addr;
+}
+
 /*
  * Create and initialize a new screen buffer.
  */
-int
+static int
 ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
-    struct imx51_ipuv3_screen **scrpp)
+    struct ipuv3_screen **scrpp)
 {
 	const struct lcd_panel_geometry *geometry;
-	struct imx51_ipuv3_screen *scr = NULL;
+	struct ipuv3_screen *scr = NULL;
 	int width, height;
 	bus_size_t size;
 	int error;
-	int busdma_flag = (cold ? BUS_DMA_NOWAIT : BUS_DMA_WAITOK);
+	//int busdma_flag = (cold ? BUS_DMA_NOWAIT : BUS_DMA_WAITOK) | BUS_DMA_COHERENT;
+	int busdma_flag = BUS_DMA_NOWAIT | BUS_DMA_COHERENT;
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
@@ -1076,31 +1078,54 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	scr->buf_size = size = scr->stride * height;
 	scr->buf_va = NULL;
 
-	//error = bus_dmamem_alloc(sc->dma_tag, size, 16, 0, scr->segs, 1,
-	//    &scr->nsegs, busdma_flag);
+	uprintf("create screen, size %d\n", size);
 
-	// XXX???
-	error = 0; //bus_dmamem_alloc(sc->dma_tag, scr->segs, busdma_flag, NULL);
+	/* XXX:
+	 * Actually we can handle nsegs>1 case by means
+	 * of multiple DMA descriptors for a panel.  It
+	 * will make code here a bit hairly.
+	 */
+	error = bus_dma_tag_create(
+	    bus_get_dma_tag(sc->dev),
+	    16, size,			/* alignment, boundary */
+	    BUS_SPACE_MAXADDR_32BIT,	/* lowaddr */
+	    BUS_SPACE_MAXADDR,		/* highaddr */
+	    NULL, NULL,			/* filter, filterarg */
+	    size, 1,			/* maxsize, nsegments */
+	    size, 0,			/* maxsegsize, flags */
+	    NULL, NULL,			/* lockfunc, lockarg */
+	    &sc->dma_tag);
 
-
-	if (error || scr->nsegs != 1) {
-		/* XXX:
-		 * Actually we can handle nsegs>1 case by means
-		 * of multiple DMA descriptors for a panel.  It
-		 * will make code here a bit hairly.
-		 */
-		if (error == 0)
-			error = E2BIG;
-		goto bad;
+	if (error) {
+		device_printf(sc->dev, "cannot create dma tag\n");
+		return (ENXIO);
 	}
 
-	// XXX
-	error = 0; //bus_dmamem_map(sc->dma_tag, scr->segs, scr->nsegs, size,
-			// (void **)&scr->buf_va, busdma_flag | BUS_DMA_COHERENT);
-	if (error)
-		goto bad;
+	uprintf("created DMA tag\n");
+	//return -1;
 
-	memset(scr->buf_va, 0, scr->buf_size);
+	error = bus_dmamem_alloc(sc->dma_tag, (void **)&sc->buf_base,
+	    busdma_flag, &scr->dma_map);
+	if (error) {
+		device_printf(sc->dev, "cannot allocate framebuffer\n");
+		return (ENXIO);
+	}
+
+	uprintf("allocated fb %p\n", sc->buf_base);
+	return -1;
+
+	error = bus_dmamap_load(sc->dma_tag, scr->dma_map, sc->buf_base,
+	    size, sai_dmamap_cb, &sc->buf_base_phys, BUS_DMA_NOWAIT);
+	if (error) {
+		device_printf(sc->dev, "cannot load DMA map\n");
+		return (ENXIO);
+	}
+
+	uprintf("DMA at %p\n", sc->buf_base_phys);
+
+	return -1;
+
+	bzero(sc->buf_base, size);
 
 #if 0
 	/* map memory for DMA */
@@ -1111,26 +1136,25 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	error = bus_dmamap_load(sc->dma_tag, scr->dma, scr->buf_va, size,
 	    NULL, busdma_flag);
-#endif
+
 	if (error)
 		goto bad;
+#endif
 
 	// XXX
 	sc->screen = scr;
 	//LIST_INSERT_HEAD(&sc->screens, scr, link);
 	//sc->n_screens++;
 
-#ifdef IPUV3_DEBUG
-	uprintf("%s: screen buffer width  %d\n", __func__, width);
-	uprintf("%s: screen buffer height %d\n", __func__, height);
-	uprintf("%s: screen buffer depth  %d\n", __func__, depth);
-	uprintf("%s: screen buffer stride %d\n", __func__, scr->stride);
-	uprintf("%s: screen buffer size   0x%08X\n", __func__,
+	dprintf("%s: screen buffer width  %d\n", __func__, width);
+	dprintf("%s: screen buffer height %d\n", __func__, height);
+	dprintf("%s: screen buffer depth  %d\n", __func__, depth);
+	dprintf("%s: screen buffer stride %d\n", __func__, scr->stride);
+	dprintf("%s: screen buffer size   0x%08X\n", __func__,
 	    (uint32_t)scr->buf_size);
-	uprintf("%s: screen buffer addr virtual  %p\n", __func__, scr->buf_va);
-	uprintf("%s: screen buffer addr physical %p\n", __func__,
-	    (void *)scr->segs[0].ds_addr);
-#endif
+	dprintf("%s: screen buffer addr virtual  %p\n", __func__, scr->buf_va);
+	//dprintf("%s: screen buffer addr physical %p\n", __func__,
+	//   (void *)scr->segs[0].ds_addr);
 
 	scr->map_size = size;		/* used when unmap this. */
 
@@ -1231,7 +1255,26 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 static void
 ipu3_fb_init(struct ipu3sc_softc *sc)
 {
-	// TODO
+	static struct lcd_panel_geometry geom = {
+		.panel_width = 480,
+		.panel_height = 272,
+		.pixel_clk = 90000,
+		.hsync_width = 40,
+		.left = 0,
+		.right = 0,
+		.vsync_width = 16,
+		.upper = 0,
+		.lower = 0,
+		.panel_info = 0,
+		.panel_sig_pol = 0
+	};
+	struct ipuv3_screen *scr;
+
+	uprintf("running init\n");
+	ipuv3_initialize(sc, &geom);
+
+	uprintf("creating screen\n");
+	ipuv3_new_screen(sc, 32, &scr);
 }
 
 #endif
@@ -1261,7 +1304,7 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 }
 
 static int
-ipu3_fb_probe(device_t dev)
+ipuv3_fb_probe(device_t dev)
 {
 
 	if (!ofw_bus_status_okay(dev))
@@ -1293,7 +1336,7 @@ static void test(struct ipu3sc_softc *sc)
 }
 
 static int
-ipu3_fb_attach(device_t dev)
+ipuv3_fb_attach(device_t dev)
 {
 	struct ipu3sc_softc *sc = device_get_softc(dev);
 	bus_space_tag_t iot;
@@ -1463,8 +1506,8 @@ ipu3_fb_detach(device_t dev)
 
 static device_method_t ipu3_fb_methods[] = {
 	/* Device interface */
-	DEVMETHOD(device_probe,		ipu3_fb_probe),
-	DEVMETHOD(device_attach,	ipu3_fb_attach),
+	DEVMETHOD(device_probe,		ipuv3_fb_probe),
+	DEVMETHOD(device_attach,	ipuv3_fb_attach),
 	DEVMETHOD(device_detach,        ipu3_fb_detach),
 
 	/* Framebuffer service methods */
