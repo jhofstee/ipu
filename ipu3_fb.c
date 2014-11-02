@@ -104,7 +104,6 @@ __FBSDID("$FreeBSD$");
 #define	IMX51_IPU_HSP_CLOCK	665000000
 
 struct ipuv3_screen {
-	/* Frame buffer */
 	bus_dma_segment_t segs[1];
 	int depth;
 	int stride;
@@ -126,8 +125,6 @@ struct lcd_panel_geometry {
 
 struct ipu3sc_softc {
 	device_t		dev;
-	//device_t		sc_fbd;		/* fbd child */
-	//struct fb_info		sc_info;
 
 	bus_space_tag_t		iot;
 	bus_space_handle_t	ioh;
@@ -140,10 +137,6 @@ struct ipu3sc_softc {
 	bus_space_handle_t	dmfc_ioh;
 	bus_space_handle_t	idmac_ioh;
 	bus_space_handle_t	cpmem_ioh;
-
-	// bus_dma_tag_t		dma_tag;
-	// bus_addr_t		buf_base_phys;
-	// uint32_t		*buf_base;
 
 	// NOTE: only 1 for know
 	struct lcd_panel_geometry const *geometry;
@@ -166,6 +159,8 @@ struct ipu3sc_softc {
 #define	CPMEM_OFFSET(_dp, _ch, _w, _o)					\
 	    (CPMEM_CHANNEL((_dp), (_ch), (_w)) + (_o))
 
+#define IPUV3_DEBUG
+
 #ifdef IPUV3_DEBUG
 #define dprintf uprintf
 #else
@@ -179,8 +174,6 @@ static void ipuv3_set_idma_param(uint32_t *params, uint32_t name, uint32_t val);
 static void ipuv3_start_dma(struct ipu3sc_softc *sc, struct ipuv3_screen *scr);
 static int ipuv3_new_screen(struct ipu3sc_softc *sc, int depth, struct ipuv3_screen **scrpp);
 static void ipuv3_geometry(struct ipu3sc_softc *sc, const struct lcd_panel_geometry *geom);
-
-#define IPUV3_DEBUG
 
 #ifdef IPUV3_DEBUG
 static void
@@ -590,8 +583,6 @@ ipuv3_geometry(struct ipu3sc_softc *sc,
 
 	dprintf("%s: screen height = %d\n",__func__ , geom->panel_height);
 	dprintf("%s:        width  = %d\n",__func__ , geom->panel_width);
-	dprintf("%s: IPU Clock = %d\n", __func__,
-	    imx51_get_clock(IMX51CLK_IPU_HSP_CLK_ROOT)); // XXX?
 	dprintf("%s: Pixel Clock = %d\n", __func__, geom->pixel_clk);
 
 	imx51_ipuv3_di_init(sc);
@@ -1030,8 +1021,6 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	int width, height;
 	bus_size_t size;
 	int error;
-	//int busdma_flag = (cold ? BUS_DMA_NOWAIT : BUS_DMA_WAITOK) | BUS_DMA_COHERENT;
-	//int busdma_flag = BUS_DMA_NOWAIT | BUS_DMA_COHERENT;
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
@@ -1046,61 +1035,11 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	memset(scr, 0, sizeof(*scr));
 
-	//scr->nsegs = 0;
 	scr->depth = depth;
 	scr->stride = width * depth / 8;
-	//scr->buf_size =
 	size = scr->stride * height;
-	//scr->buf_va = NULL;
 
 	uprintf("create screen, size %lu\n", size);
-
-#ifdef FREEBSD_IS_BROKEN
-	/* XXX:
-	 * Actually we can handle nsegs>1 case by means
-	 * of multiple DMA descriptors for a panel.  It
-	 * will make code here a bit hairly.
-	 */
-	error = bus_dma_tag_create(
-	    bus_get_dma_tag(sc->dev),
-	    0, 0,			/* alignment, boundary */
-	    BUS_SPACE_MAXADDR_32BIT,	/* lowaddr */
-	    BUS_SPACE_MAXADDR,		/* highaddr */
-	    NULL, NULL,			/* filter, filterarg */
-	    size, 1,			/* maxsize, nsegments */
-	    size, 0,			/* maxsegsize, flags */
-	    NULL, NULL,			/* lockfunc, lockarg */
-	    &sc->dma_tag);
-
-	if (error) {
-		device_printf(sc->dev, "cannot create dma tag\n");
-		return (ENXIO);
-	}
-
-	uprintf("created DMA tag\n");
-	//return -1;
-
-	error = bus_dmamem_alloc(sc->dma_tag, (void **)&sc->buf_base,
-	    busdma_flag, &scr->dma_map);
-	if (error) {
-		device_printf(sc->dev, "cannot allocate framebuffer\n");
-		return (ENXIO);
-	}
-
-	uprintf("allocated fb %p\n", sc->buf_base);
-	return -1;
-
-	error = bus_dmamap_load(sc->dma_tag, scr->dma_map, sc->buf_base,
-	    size, sai_dmamap_cb, &sc->buf_base_phys, BUS_DMA_NOWAIT);
-	if (error) {
-		device_printf(sc->dev, "cannot load DMA map\n");
-		return (ENXIO);
-	}
-
-	uprintf("DMA at %lu\n", sc->buf_base_phys);
-
-	return -1;
-#endif
 
 	scr->segs[0].ds_addr = (bus_addr_t) malloc(size, M_DEVBUF, M_ZERO | M_NOWAIT);
 	if (scr->segs[0].ds_addr == 0) {
@@ -1108,59 +1047,18 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 		return (ENXIO);
 	}
 
-	//bzero(sc->buf_base, size);
-
-#ifdef NETBSD
-	/* map memory for DMA */
-	error = bus_dmamap_create(sc->dma_tag, 1024*1024*2, 1, 1024*1024*2, 0,
-	    busdma_flag, &scr->dma);
-	if (error)
-		goto bad;
-
-	error = bus_dmamap_load(sc->dma_tag, scr->dma, scr->buf_va, size,
-	    NULL, busdma_flag);
-
-	if (error)
-		goto bad;
-#endif
-
 	// XXX
 	sc->screen = scr;
-	//LIST_INSERT_HEAD(&sc->screens, scr, link);
-	//sc->n_screens++;
 
 	dprintf("%s: screen buffer width  %d\n", __func__, width);
 	dprintf("%s: screen buffer height %d\n", __func__, height);
 	dprintf("%s: screen buffer depth  %d\n", __func__, depth);
 	dprintf("%s: screen buffer stride %d\n", __func__, scr->stride);
-	dprintf("%s: screen buffer size   0x%08X\n", __func__,
-	    (uint32_t)scr->buf_size);
-	dprintf("%s: screen buffer addr virtual  %p\n", __func__, scr->buf_va);
-	//dprintf("%s: screen buffer addr physical %p\n", __func__,
-	//   (void *)scr->segs[0].ds_addr);
-
-	//scr->map_size = size;		/* used when unmap this. */
 
 	// I hate this, leaking allocated data
 	*scrpp = scr;
 
 	return 0;
-
-//bad:
-//	dprintf("%s: error = 0x%08X\n", __func__, error);
-
-	// XXX
-	/*
-	if (scr) {
-		if (scr->buf_va)
-			bus_dmamem_unmap(sc->dma_tag, scr->buf_va, size);
-		if (scr->nsegs)
-			bus_dmamem_free(sc->dma_tag, scr->segs, scr->nsegs);
-		free(scr, M_DEVBUF);
-	}
-	*/
-	*scrpp = NULL;
-	return error;
 }
 
 #if 0
@@ -1256,7 +1154,7 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 	ipuv3_initialize(sc, &geom);
 
 	uprintf("creating screen\n");
-	ipuv3_new_screen(sc, 32, &scr);
+	ipuv3_new_screen(sc, 24, &scr);
 
 	ipuv3_start_dma(sc, scr);
 }
