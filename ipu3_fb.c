@@ -104,53 +104,30 @@ __FBSDID("$FreeBSD$");
 #define	IMX51_IPU_HSP_CLOCK	665000000
 
 struct ipuv3_screen {
-	//LIST_ENTRY(imx51_ipuv3_screen) link;
-
 	/* Frame buffer */
-	// XXX move here from sc
-	bus_dmamap_t dma_map;
-	//bus_dma_segment_t segs[1];
-
-	int 	nsegs;
-	size_t  buf_size;
-	size_t  map_size;
-	void 	*buf_va;
-	int	depth;
-	int	stride;
-
-	/* DMA frame descriptor */
-	//struct	ipuv3_dma_descriptor *dma_desc;
-	//XXX
-	//paddr_t	dma_desc_pa;
-
-	/* rasterop */
-	//struct rasops_info rinfo;
+	bus_dma_segment_t segs[1];
+	int depth;
+	int stride;
 };
-
 
 struct lcd_panel_geometry {
 	short panel_width;
 	short panel_height;
-
 	uint32_t pixel_clk;
-
 	short hsync_width;
 	short left;
 	short right;
-
 	short vsync_width;
 	short upper;
 	short lower;
-
 	short panel_info;
 	uint32_t panel_sig_pol;
 };
 
-
 struct ipu3sc_softc {
 	device_t		dev;
-	device_t		sc_fbd;		/* fbd child */
-	struct fb_info		sc_info;
+	//device_t		sc_fbd;		/* fbd child */
+	//struct fb_info		sc_info;
 
 	bus_space_tag_t		iot;
 	bus_space_handle_t	ioh;
@@ -164,18 +141,14 @@ struct ipu3sc_softc {
 	bus_space_handle_t	idmac_ioh;
 	bus_space_handle_t	cpmem_ioh;
 
-	bus_dma_tag_t		dma_tag;
-	//bus_dmamap_t		dma_map;
-	bus_addr_t		buf_base_phys;
-	uint32_t		*buf_base;
-	struct tcd_conf		*tcd;
+	// bus_dma_tag_t		dma_tag;
+	// bus_addr_t		buf_base_phys;
+	// uint32_t		*buf_base;
 
 	// NOTE: only 1 for know
-	struct lcd_panel_geometry *geometry;
+	struct lcd_panel_geometry const *geometry;
 	struct ipuv3_screen *screen;
 };
-
-static struct ipu3sc_softc *ipu3sc_softc;
 
 #define	IPUV3_READ(ipuv3, module, reg)					\
 	bus_space_read_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg))
@@ -204,8 +177,8 @@ static int ipuv3_fb_probe(device_t);
 static int ipuv3_fb_attach(device_t);
 static void ipuv3_set_idma_param(uint32_t *params, uint32_t name, uint32_t val);
 static void ipuv3_start_dma(struct ipu3sc_softc *sc, struct ipuv3_screen *scr);
-static int ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
-    struct ipuv3_screen **scrpp);
+static int ipuv3_new_screen(struct ipu3sc_softc *sc, int depth, struct ipuv3_screen **scrpp);
+static void ipuv3_geometry(struct ipu3sc_softc *sc, const struct lcd_panel_geometry *geom);
 
 #define IPUV3_DEBUG
 
@@ -852,20 +825,18 @@ static void
 ipuv3_write_dmaparam(struct ipu3sc_softc *sc,
     int ch, uint32_t *value, int size)
 {
-	uprintf("%s : %d\n", __func__, __LINE__);
-
 	int i;
 	uint32_t addr = ch * 0x40;
+
+	uprintf("%s : %d\n", __func__, __LINE__);
 
 	for (i = 0; i < size; i++) {
 		IPUV3_WRITE(sc, cpmem, addr + ((i % 5) * 0x4) +
 		    ((i / 5) * 0x20), value[i]);
-#ifdef IPUV3_DEBUG
-		uprintf("%s: addr = 0x%08X, val = 0x%08X\n", __func__,
+		dprintf("%s: addr = 0x%08X, val = 0x%08X\n", __func__,
 		    addr + ((i % 5) * 0x4) + ((i / 5) * 0x20),
 		    IPUV3_READ(sc, cpmem, addr + ((i % 5) * 0x4) +
 			((i / 5) * 0x20)));
-#endif
 	}
 }
 
@@ -882,7 +853,8 @@ ipuv3_build_param(struct ipu3sc_softc *sc,
 	    (geom->panel_width - 1));
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_FH,
 	    (geom->panel_height - 1));
-#ifdef DMA_FIXED
+#define TRY_MALLOC
+#ifdef TRY_MALLOC
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA0,
 	    scr->segs[0].ds_addr >> 3);
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA1,
@@ -1032,6 +1004,7 @@ ipuv3_stop_dma(struct ipu3sc_softc *sc)
 	return;
 }
 
+#ifdef FREEBSD_IS_BROKEN
 static void
 sai_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 {
@@ -1043,6 +1016,7 @@ sai_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 	addr = (bus_addr_t*)arg;
 	*addr = segs[0].ds_addr;
 }
+#endif
 
 /*
  * Create and initialize a new screen buffer.
@@ -1057,7 +1031,7 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	bus_size_t size;
 	int error;
 	//int busdma_flag = (cold ? BUS_DMA_NOWAIT : BUS_DMA_WAITOK) | BUS_DMA_COHERENT;
-	int busdma_flag = BUS_DMA_NOWAIT | BUS_DMA_COHERENT;
+	//int busdma_flag = BUS_DMA_NOWAIT | BUS_DMA_COHERENT;
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
@@ -1072,14 +1046,16 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	memset(scr, 0, sizeof(*scr));
 
-	scr->nsegs = 0;
+	//scr->nsegs = 0;
 	scr->depth = depth;
 	scr->stride = width * depth / 8;
-	scr->buf_size = size = scr->stride * height;
-	scr->buf_va = NULL;
+	//scr->buf_size =
+	size = scr->stride * height;
+	//scr->buf_va = NULL;
 
-	uprintf("create screen, size %d\n", size);
+	uprintf("create screen, size %lu\n", size);
 
+#ifdef FREEBSD_IS_BROKEN
 	/* XXX:
 	 * Actually we can handle nsegs>1 case by means
 	 * of multiple DMA descriptors for a panel.  It
@@ -1087,7 +1063,7 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	 */
 	error = bus_dma_tag_create(
 	    bus_get_dma_tag(sc->dev),
-	    16, size,			/* alignment, boundary */
+	    0, 0,			/* alignment, boundary */
 	    BUS_SPACE_MAXADDR_32BIT,	/* lowaddr */
 	    BUS_SPACE_MAXADDR,		/* highaddr */
 	    NULL, NULL,			/* filter, filterarg */
@@ -1121,13 +1097,20 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 		return (ENXIO);
 	}
 
-	uprintf("DMA at %p\n", sc->buf_base_phys);
+	uprintf("DMA at %lu\n", sc->buf_base_phys);
 
 	return -1;
+#endif
 
-	bzero(sc->buf_base, size);
+	scr->segs[0].ds_addr = (bus_addr_t) malloc(size, M_DEVBUF, M_ZERO | M_NOWAIT);
+	if (scr->segs[0].ds_addr == 0) {
+		device_printf(sc->dev, "cannot allocate framebuffer\n");
+		return (ENXIO);
+	}
 
-#if 0
+	//bzero(sc->buf_base, size);
+
+#ifdef NETBSD
 	/* map memory for DMA */
 	error = bus_dmamap_create(sc->dma_tag, 1024*1024*2, 1, 1024*1024*2, 0,
 	    busdma_flag, &scr->dma);
@@ -1156,16 +1139,15 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	//dprintf("%s: screen buffer addr physical %p\n", __func__,
 	//   (void *)scr->segs[0].ds_addr);
 
-	scr->map_size = size;		/* used when unmap this. */
+	//scr->map_size = size;		/* used when unmap this. */
 
+	// I hate this, leaking allocated data
 	*scrpp = scr;
 
 	return 0;
 
-bad:
-#ifdef IPUV3_DEBUG
-	uprintf("%s: error = 0x%08X\n", __func__, error);
-#endif
+//bad:
+//	dprintf("%s: error = 0x%08X\n", __func__, error);
 
 	// XXX
 	/*
@@ -1275,10 +1257,13 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 
 	uprintf("creating screen\n");
 	ipuv3_new_screen(sc, 32, &scr);
+
+	ipuv3_start_dma(sc, scr);
 }
 
 #endif
 
+#ifdef NOT_USED
 /* Use own color map, because of different RGB offset. */
 static int
 ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
@@ -1302,6 +1287,7 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 		return (1);
 	}
 }
+#endif
 
 static int
 ipuv3_fb_probe(device_t dev)
@@ -1319,22 +1305,6 @@ ipuv3_fb_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
-static void test(struct ipu3sc_softc *sc)
-{
-	int dp = IMX_IPU_DP0;
-	int height;
-
-	/* FW W0[137:125] - 96 = [41:29] */
-	/* FH W0[149:138] - 96 = [53:42] */
-	uprintf("dp: offset %X\n", CPMEM_OFFSET(dp, 23, 0, 16));
-
-	// DI0 Screen Configuration Register (IPUx_DI0_SCR_CONF)
-	// Address: Base address + 4_0170h offset
-	height = IPUV3_READ(sc, di0, IPU_DI_SCR_CONF);
-
-	uprintf("size: %d %d\n", sc->sc_info.fb_width, height);
-}
-
 static int
 ipuv3_fb_attach(device_t dev)
 {
@@ -1346,8 +1316,6 @@ ipuv3_fb_attach(device_t dev)
 	int err;
 	uintptr_t base;
 
-	ipu3sc_softc = sc;
-
 #if 0 // FIXME
 	if (bootverbose)
 		device_printf(dev, "clock gate status is %d\n",
@@ -1355,8 +1323,6 @@ ipuv3_fb_attach(device_t dev)
 #endif
 
 	sc->dev = dev;
-
-	sc = device_get_softc(dev);
 	sc->iot = iot = fdtbus_bs_tag;
 
 	/*
@@ -1450,8 +1416,8 @@ ipuv3_fb_attach(device_t dev)
 	 */
 	ipu3_fb_init(sc);
 
+#ifdef FREEBSD_SC
 	sc->sc_info.fb_name = device_get_nameunit(dev);
-
 	ipu3_fb_init_cmap(sc->sc_info.fb_cmap, sc->sc_info.fb_depth);
 	sc->sc_info.fb_cmsize = 16;
 
@@ -1459,14 +1425,13 @@ ipuv3_fb_attach(device_t dev)
 	sc->sc_fbd = device_add_child(dev, "fbd", device_get_unit(dev));
 	if (sc->sc_fbd == NULL)
 		device_printf(dev, "Can't attach fbd device\n");
+#endif
 
-
-	test(sc);
 	ipuv3_dump(sc);
 
 	//return -1;
 
-	return (bus_generic_attach(dev));
+	return (0);
 
 fail_retarn_dctmpl:
 	bus_space_unmap(sc->iot, sc->cpmem_ioh, IPU_CPMEM_SIZE);
@@ -1490,6 +1455,7 @@ fail_retarn_cm:
 	return (err);
 }
 
+#ifdef FREEBSD_SC
 static struct fb_info *
 ipu3_fb_getinfo(device_t dev)
 {
@@ -1497,6 +1463,10 @@ ipu3_fb_getinfo(device_t dev)
 
 	return (&sc->sc_info);
 }
+/* Framebuffer service methods */
+DEVMETHOD(fb_getinfo,		ipu3_fb_getinfo),
+
+#endif
 
 static int
 ipu3_fb_detach(device_t dev)
@@ -1509,9 +1479,6 @@ static device_method_t ipu3_fb_methods[] = {
 	DEVMETHOD(device_probe,		ipuv3_fb_probe),
 	DEVMETHOD(device_attach,	ipuv3_fb_attach),
 	DEVMETHOD(device_detach,        ipu3_fb_detach),
-
-	/* Framebuffer service methods */
-	DEVMETHOD(fb_getinfo,		ipu3_fb_getinfo),
 	{ 0, 0 }
 };
 
