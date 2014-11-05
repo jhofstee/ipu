@@ -444,7 +444,26 @@ ipuv3_di_sync_conf(struct ipu3sc_softc *sc, int no,
 	    IPU_DI_STP_REP(no), reg);
 }
 
-#if 1
+static void dump_di_regs(struct ipu3sc_softc *sc)
+{
+#ifdef IPUV3_DEBUG
+	int i;
+
+	uprintf("*** DI0 ***\n");
+	for (i = 0; i <= 0x174; i += 4)
+		uprintf("0x%08X = 0x%08X\n", i, IPUV3_READ(sc, di0, i));
+
+	uprintf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
+	    IPUV3_READ(sc, cm, IPU_CM_DISP_GEN));
+	uprintf("%s: IPU_DI_SYNC_AS_GEN : 0x%08X\n", __func__,
+	    IPUV3_READ(sc, di0, IPU_DI_SYNC_AS_GEN));
+	uprintf("%s: IPU_DI_GENERAL     : 0x%08X\n", __func__,
+	    IPUV3_READ(sc, di0, IPU_DI_GENERAL));
+	uprintf("%s: IPU_DI_POL         : 0x%08X\n", __func__,
+	    IPUV3_READ(sc, di0, IPU_DI_POL));
+#endif
+}
+
 /* Display interface */
 static void
 imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
@@ -554,25 +573,9 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 	reg |= CM_DISP_GEN_DI0_COUNTER_RELEASE;
 	IPUV3_WRITE(sc, cm, IPU_CM_DISP_GEN, reg);
 
-#ifdef IPUV3_DEBUG
-	int i;
-	uprintf("*** DI0 ***\n");
-	for (i = 0; i <= 0x174; i += 4)
-		uprintf("0x%08X = 0x%08X\n", i, IPUV3_READ(sc, di0, i));
-
-	uprintf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
-	    IPUV3_READ(sc, cm, IPU_CM_DISP_GEN));
-	uprintf("%s: IPU_DI_SYNC_AS_GEN : 0x%08X\n", __func__,
-	    IPUV3_READ(sc, di0, IPU_DI_SYNC_AS_GEN));
-	uprintf("%s: IPU_DI_GENERAL     : 0x%08X\n", __func__,
-	    IPUV3_READ(sc, di0, IPU_DI_GENERAL));
-	uprintf("%s: IPU_DI_POL         : 0x%08X\n", __func__,
-	    IPUV3_READ(sc, di0, IPU_DI_POL));
-#endif
+	dump_di_regs(sc);
 }
-#endif
 
-#if 1
 void
 ipuv3_geometry(struct ipu3sc_softc *sc,
     const struct lcd_panel_geometry *geom)
@@ -594,12 +597,10 @@ ipuv3_geometry(struct ipu3sc_softc *sc,
 
 	return;
 }
-#endif
 
 /*
  * Initialize the IPUV3 controller.
  */
-#if 1
 static void
 ipuv3_initialize(struct ipu3sc_softc *sc,
     const struct lcd_panel_geometry *geom)
@@ -629,7 +630,6 @@ ipuv3_initialize(struct ipu3sc_softc *sc,
 	    CM_DISP_GEN_MCU_T(0x8);
 	IPUV3_WRITE(sc, cm, IPU_CM_DISP_GEN, reg);
 }
-#endif
 
 #if 0
 static void
