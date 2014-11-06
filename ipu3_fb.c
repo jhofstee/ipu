@@ -104,7 +104,8 @@ __FBSDID("$FreeBSD$");
 #define	IMX51_IPU_HSP_CLOCK	665000000
 
 struct ipuv3_screen {
-	bus_dma_segment_t segs[1];
+	//bus_dma_segment_t segs[1];
+	bus_dmamap_t dma_map;
 	int depth;
 	int stride;
 };
@@ -141,6 +142,10 @@ struct ipu3sc_softc {
 	// NOTE: only 1 for know
 	struct lcd_panel_geometry const *geometry;
 	struct ipuv3_screen *screen;
+
+	bus_dma_tag_t dma_tag;
+	bus_addr_t buf_base_phys;
+	uint32_t *buf_base;
 };
 
 #define	IPUV3_READ(ipuv3, module, reg)					\
@@ -248,8 +253,7 @@ ipuv3_dmfc_init(struct ipu3sc_softc *sc)
 	uprintf("%s : %d\n", __func__, __LINE__);
 
 	/* IC channel is disabled */
-	IPUV3_WRITE(sc, dmfc, IPU_DMFC_IC_CTRL,
-	    IC_IN_PORT_DISABLE);
+	IPUV3_WRITE(sc, dmfc, IPU_DMFC_IC_CTRL, IC_IN_PORT_DISABLE);
 
 	IPUV3_WRITE(sc, dmfc, IPU_DMFC_WR_CHAN, 0x00000000);
 	IPUV3_WRITE(sc, dmfc, IPU_DMFC_WR_CHAN_DEF, 0x20202020);
@@ -573,7 +577,7 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 	reg |= CM_DISP_GEN_DI0_COUNTER_RELEASE;
 	IPUV3_WRITE(sc, cm, IPU_CM_DISP_GEN, reg);
 
-	dump_di_regs(sc);
+	//dump_di_regs(sc);
 }
 
 void
@@ -611,10 +615,13 @@ ipuv3_initialize(struct ipu3sc_softc *sc,
 
 	IPUV3_WRITE(sc, cm, IPU_CM_CONF, 0);
 
+#if 0
 	/* reset */
+	uprintf("reset\n");
 	IPUV3_WRITE(sc, cm, IPU_CM_MEM_RST, CM_MEM_START | CM_MEM_EN);
 	while (IPUV3_READ(sc, cm, IPU_CM_MEM_RST) & CM_MEM_START)
 		; /* wait */
+#endif
 
 	ipuv3_dmfc_init(sc);
 	imx51_ipuv3_dc_init(sc);
@@ -847,9 +854,9 @@ ipuv3_build_param(struct ipu3sc_softc *sc,
 #define TRY_MALLOC
 #ifdef TRY_MALLOC
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA0,
-	    scr->segs[0].ds_addr >> 3);
+	    sc->buf_base_phys >> 3);
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA1,
-	    scr->segs[0].ds_addr >> 3);
+	    sc->buf_base_phys >> 3);
 #endif
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_SL,
 	    (scr->stride - 1));
@@ -1009,6 +1016,21 @@ sai_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
 }
 #endif
 
+static void
+sai_dmamap_cb(void *arg, bus_dma_segment_t *segs, int nseg, int err)
+{
+	bus_addr_t *addr;
+
+	if (err)
+		return;
+
+	// arg is just sc->buf_base
+	addr = (bus_addr_t*)arg;
+	*addr = segs[0].ds_addr;
+	//uprintf("some weird callback set %lu\n", segs[0].ds_addr);
+	uprintf("cb: %p, 0x%lX nseg=%d error=%d\n", arg, segs[0].ds_addr, nseg, err);
+}
+
 /*
  * Create and initialize a new screen buffer.
  */
@@ -1021,6 +1043,7 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 	int width, height;
 	bus_size_t size;
 	int error;
+	//void *fb;
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
@@ -1041,11 +1064,57 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	uprintf("create screen, size %lu\n", size);
 
-	scr->segs[0].ds_addr = (bus_addr_t) malloc(size, M_DEVBUF, M_ZERO | M_NOWAIT);
-	if (scr->segs[0].ds_addr == 0) {
+#ifdef USE_MALLOC
+	fb = malloc(size, M_DEVBUF, M_ZERO | M_NOWAIT);;
+	scr->segs[0].ds_addr = pmap_kextract(fb);
+
+#else
+	 /* XXX:
+	 * Actually we can handle nsegs>1 case by means
+	 * of multiple DMA descriptors for a panel. It
+	 * will make code here a bit hairly.
+	 */
+	error = bus_dma_tag_create(
+		bus_get_dma_tag(sc->dev),
+		1, 0, /* alignment, boundary */
+		BUS_SPACE_MAXADDR_32BIT, /* lowaddr */
+		BUS_SPACE_MAXADDR, /* highaddr */
+		NULL, NULL, /* filter, filterarg */
+		size, 1, /* maxsize, nsegments */
+		size, 0, /* maxsegsize, flags */
+		NULL, NULL, /* lockfunc, lockarg */
+		&sc->dma_tag);
+
+	if (error) {
+		device_printf(sc->dev, "cannot create dma tag\n");
+		return (ENXIO);
+	}
+
+	uprintf("created DMA tag\n");
+
+	error = bus_dmamem_alloc(sc->dma_tag, (void **)&sc->buf_base,
+				BUS_DMA_NOWAIT | BUS_DMA_COHERENT, &scr->dma_map);
+	if (error) {
 		device_printf(sc->dev, "cannot allocate framebuffer\n");
 		return (ENXIO);
 	}
+
+	uprintf("allocated fb %p\n", sc->buf_base);
+
+	error = bus_dmamap_load(sc->dma_tag, scr->dma_map, sc->buf_base,
+		size, sai_dmamap_cb, &sc->buf_base_phys, BUS_DMA_NOWAIT);
+	if (error) {
+		device_printf(sc->dev, "cannot load DMA map\n");
+		return (ENXIO);
+	}
+
+	 uprintf("DMA at %lX\n", sc->buf_base_phys);
+
+	 //return -1;
+#endif
+
+	dprintf("fb VA %p PA %lX\n", sc->buf_base, sc->buf_base_phys);
+
 
 	// XXX
 	sc->screen = scr;
@@ -1140,11 +1209,11 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 		.panel_height = 272,
 		.pixel_clk = 90000,
 		.hsync_width = 40,
-		.left = 0,
-		.right = 0,
+		.left = 2,
+		.right = 2,
 		.vsync_width = 16,
-		.upper = 0,
-		.lower = 0,
+		.upper = 2,
+		.lower = 2,
 		.panel_info = 0,
 		.panel_sig_pol = 0
 	};
@@ -1154,10 +1223,15 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 	ipuv3_initialize(sc, &geom);
 
 	uprintf("creating screen\n");
-	ipuv3_new_screen(sc, 24, &scr);
+	if (ipuv3_new_screen(sc, 32, &scr) != 0) {
+		uprintf("screen init failed\n");
+		return;
+	}
+
 
 	ipuv3_start_dma(sc, scr);
 }
+
 
 #endif
 
