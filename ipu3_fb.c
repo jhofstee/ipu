@@ -858,6 +858,9 @@ ipuv3_write_dmaparam(struct ipu3sc_softc *sc,
 }
 
 /*
+ * Reads the configurations two cpmem words (160 bits, 5x32bit values into out.
+ * The 3 x 32 alignment value are skipped.) Out can be NULL to just dump values.
+ *
  * The CPMEM holds the configuration parameters for each IDMAC channel. The
  * CPMEM can hold the settings of 80 channels. Each IDMAC's channel's parameters
  * are located on 2 CPMEM entries. Each Entry is 160 bit. The CPMEM is memory
@@ -875,17 +878,19 @@ static void
 ipuv3_read_dmaparam(struct ipu3sc_softc *sc,
     int ch, uint32_t *out, int size)
 {
-	int i;
+	/* a single channel has two words padded to 0x20 */
 	uint32_t base = ch * 0x40;
-	uint32_t val, addr;
+	int i;
 
 	for (i = 0; i < size; i++) {
 		uint32_t cpmem_word = i / 5;
 		uint32_t reg = i % 5;
+		uint32_t val, addr;
 
 		addr = base + cpmem_word * 0x20 + reg * 4;
 		val = IPUV3_READ(sc, cpmem, addr);
-		debugf("addr = 0x%08X, word:%d:%d, val = 0x%08X\n", addr, cpmem_word, reg, val);
+		debugf("addr = 0x%08X, word:%d:%d, val = 0x%08X\n", addr,
+		       cpmem_word, reg, val);
 
 		if (out != NULL)
 			out[i] = val;
