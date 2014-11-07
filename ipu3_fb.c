@@ -1302,16 +1302,51 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 
 static struct ipuv3_data ipuv3_data_imx51 =
 {
-	.cm_offset = 0x1e000000,
-	.idmac_offset = 0x1e008000,
-	.dp_offset = 0x1e018000,
-	.di0_offset = 0x1e040000,
-	.di1_offset = 0x1e048000,
-	.dctmpl_offset = 0x1f080000,
-	.dc_offset = 0x1e058000,
-	.dmfc_offset = 0x1e060000,
-	.cpmem_offset = 0x1f000000,
+	.cm_offset	= 0x1e000000,
+	.idmac_offset	= 0x1e008000,
+	.dp_offset	= 0x1e018000,
+	.di0_offset	= 0x1e040000,
+	.di1_offset	= 0x1e048000,
+	.dc_offset	= 0x1e058000,
+	.dmfc_offset	= 0x1e060000,
+	.cpmem_offset	= 0x1f000000,
+	.dctmpl_offset	= 0x1f080000,
 };
+
+/*
+ * The black magic, the Freescale SDK and linux seem to insist there
+ * is some 0x200000 offset from 2400000. The datasheet mentions:
+ *
+ * 02A0_0000 02DF_FFFF 4 MB IPU-2
+ * 0260_0000 029F_FFFF 4 MB IPU-1
+ * 0220_C000 023F_FFFF 2 MB Reserved
+ *
+ * Notice the hole between reserved and the IPU1.
+ * Cpmem offset is misterious as well, see also:
+ *
+ * https://community.freescale.com/thread/307965
+ *
+ * note: this ends up being the table above + offset!
+ */
+
+static struct ipuv3_data ipuv3_data_imx6 =
+{
+	.cm_offset	= 0x200000,
+	.idmac_offset	= 0x208000,
+	.dp_offset	= 0x218000,
+	/* 262_0000 IC Configuration Register (IPU1_IC_CONF) */
+	/* 263_0000 CSI0 Sensor Configuration Register (IPU1_CSI0_SENS_CONF) */
+	/* 263_8000 CSI1 Sensor Configuration Register (IPU1_CSI1_SENS_CONF) */
+	.di0_offset	= 0x240000,
+	.di1_offset	= 0x248000,
+	// 265_0000 SMFC Mapping Register (IPU1_SMFC_MAP)
+	.dc_offset	= 0x258000,
+	.dmfc_offset	= 0x260000,
+	/* 266_8000 VDI Field Size Register (IPU1_VDI_FSIZE) */
+	.cpmem_offset	= 0x300000,
+	.dctmpl_offset	= 0x380000
+};
+
 
 struct match {
 	char const *compatible;
@@ -1320,6 +1355,7 @@ struct match {
 
 static struct match matches[] = {
 	{ .compatible = "fsl,ipu3", .data = &ipuv3_data_imx51 },
+	{ .compatible = "fsl,imx6q-ipu", .data = &ipuv3_data_imx6 },
 	{}
 };
 
