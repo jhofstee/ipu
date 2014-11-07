@@ -864,6 +864,12 @@ ipuv3_write_dmaparam(struct ipu3sc_softc *sc,
  * mapped and is accessible via the AHB bus. The AHB bus's accesses are 32bit
  * wide. A CPMEM entry is composed of 5x32bit words. The next CPMEM entry starts
  * at the next 8x32bit words (0x0, 0x20,0x40, etc.).
+ *
+ * This memory can be accessed while tasks are enabled. Must be configured
+ * before enabling processing tasks. IDMAC channel parameters must not be
+ * changed in the CPM when the corresponding DMA channel is enabled excluding
+ * the base addresses (EBA0 and EBA1). One of these parameters can be changed
+ * during channel operation if it relates to the non-active double buffer.
  */
 static void
 ipuv3_read_dmaparam(struct ipu3sc_softc *sc,
@@ -874,9 +880,12 @@ ipuv3_read_dmaparam(struct ipu3sc_softc *sc,
 	uint32_t val, addr;
 
 	for (i = 0; i < size; i++) {
-		addr = base + ((i % 5) * 0x4) + ((i / 5) * 0x20);
+		uint32_t cpmem_word = i / 5;
+		uint32_t reg = i % 5;
+
+		addr = base + cpmem_word * 0x20 + reg * 4;
 		val = IPUV3_READ(sc, cpmem, addr);
-		debugf("addr = 0x%08X, val = 0x%08X\n", addr, val);
+		debugf("addr = 0x%08X, word:%d:%d, val = 0x%08X\n", addr, cpmem_word, reg, val);
 
 		if (out != NULL)
 			out[i] = val;
@@ -1267,7 +1276,7 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 	ipuv3_start_dma(sc, scr);
 #endif
 	uint32_t params[10];
-	ipuv3_read_dmaparam(sc, 0, params, sizeof(params) / sizeof(params[0]));
+	ipuv3_read_dmaparam(sc, 23, params, sizeof(params) / sizeof(params[0]));
 }
 
 
@@ -1382,7 +1391,6 @@ ipuv3_fb_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
-//static int map
 
 static int
 map(struct ipu3sc_softc *sc, bus_addr_t address, bus_size_t size,
@@ -1443,7 +1451,7 @@ ipuv3_fb_attach(device_t dev)
 		base = fdt32_to_cpu(reg) - IPU_CM_BASE(0);
 	}
 	*/
-	base = 2400000;
+	base = 0x2400000;
 	uprintf("base %lX\n", base);
 
 	/* map controller registers */
