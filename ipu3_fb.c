@@ -1299,20 +1299,6 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 }
 #endif
 
-
-static struct ipuv3_data ipuv3_data_imx51 =
-{
-	.cm_offset	= 0x1e000000,
-	.idmac_offset	= 0x1e008000,
-	.dp_offset	= 0x1e018000,
-	.di0_offset	= 0x1e040000,
-	.di1_offset	= 0x1e048000,
-	.dc_offset	= 0x1e058000,
-	.dmfc_offset	= 0x1e060000,
-	.cpmem_offset	= 0x1f000000,
-	.dctmpl_offset	= 0x1f080000,
-};
-
 /*
  * The black magic, the Freescale SDK and linux seem to insist there
  * is some 0x200000 offset from 2400000. The datasheet mentions:
@@ -1329,6 +1315,19 @@ static struct ipuv3_data ipuv3_data_imx51 =
  * note: this ends up being the table above + offset!
  */
 
+static struct ipuv3_data ipuv3_data_imx51 =
+{
+	.cm_offset	= 0x1e000000,
+	.idmac_offset	= 0x1e008000,
+	.dp_offset	= 0x1e018000,
+	.di0_offset	= 0x1e040000,
+	.di1_offset	= 0x1e048000,
+	.dc_offset	= 0x1e058000,
+	.dmfc_offset	= 0x1e060000,
+	.cpmem_offset	= 0x1f000000, // XXX: 1000000 from cm_offset (6 zeros)
+	.dctmpl_offset	= 0x1f080000,
+};
+
 static struct ipuv3_data ipuv3_data_imx6 =
 {
 	.cm_offset	= 0x200000,
@@ -1343,7 +1342,7 @@ static struct ipuv3_data ipuv3_data_imx6 =
 	.dc_offset	= 0x258000,
 	.dmfc_offset	= 0x260000,
 	/* 266_8000 VDI Field Size Register (IPU1_VDI_FSIZE) */
-	.cpmem_offset	= 0x300000,
+	.cpmem_offset	= 0x300000, // 100000 from cm_offset (5 zeros)
 	.dctmpl_offset	= 0x380000
 };
 
