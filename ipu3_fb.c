@@ -103,6 +103,37 @@ __FBSDID("$FreeBSD$");
 
 #define	IMX51_IPU_HSP_CLOCK	665000000
 
+#define DEBUG
+
+#ifdef DEBUG
+#define debuglf(fmt, args...) do {				\
+	uprintf("%s(): " fmt, __func__, ##args);		\
+    } while (0)
+
+#define debugf(fmt, args...) do {				\
+	uprintf(fmt, ##args);					\
+    } while (0)
+#else
+#define debuglf(fmt, args...)
+#define debugf(fmt, args...)
+#endif
+
+#define	IPUV3_READ(ipuv3, module, reg)					\
+	bus_space_read_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg))
+#define	IPUV3_WRITE(ipuv3, module, reg, val)				\
+	bus_space_write_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg), (val))
+
+#define	CPMEM_CHANNEL_OFFSET(_c)	((_c) * 0x40)
+#define	CPMEM_WORD_OFFSET(_w)		((_w) * 0x20)
+#define	CPMEM_DP_OFFSET(_d)		((_d) * 0x10000)
+#define	IMX_IPU_DP0		0
+#define	IMX_IPU_DP1		1
+#define	CPMEM_CHANNEL(_dp, _ch, _w)					\
+	    (CPMEM_DP_OFFSET(_dp) + CPMEM_CHANNEL_OFFSET(_ch) +		\
+		CPMEM_WORD_OFFSET(_w))
+#define	CPMEM_OFFSET(_dp, _ch, _w, _o)					\
+	    (CPMEM_CHANNEL((_dp), (_ch), (_w)) + (_o))
+
 struct ipuv3_screen {
 	//bus_dma_segment_t segs[1];
 	bus_dmamap_t dma_map;
@@ -124,8 +155,21 @@ struct lcd_panel_geometry {
 	uint32_t panel_sig_pol;
 };
 
+struct ipuv3_data {
+	bus_addr_t	cm_offset;
+	bus_addr_t	idmac_offset;
+	bus_addr_t	dp_offset;
+	bus_addr_t	di0_offset;
+	bus_addr_t	di1_offset;
+	bus_addr_t	dctmpl_offset;
+	bus_addr_t	dc_offset;
+	bus_addr_t	dmfc_offset;
+	bus_addr_t	cpmem_offset;
+};
+
 struct ipu3sc_softc {
 	device_t		dev;
+	struct ipuv3_data	*data;
 
 	bus_space_tag_t		iot;
 	bus_space_handle_t	ioh;
@@ -148,29 +192,6 @@ struct ipu3sc_softc {
 	uint32_t *buf_base;
 };
 
-#define	IPUV3_READ(ipuv3, module, reg)					\
-	bus_space_read_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg))
-#define	IPUV3_WRITE(ipuv3, module, reg, val)				\
-	bus_space_write_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg), (val))
-
-#define	CPMEM_CHANNEL_OFFSET(_c)	((_c) * 0x40)
-#define	CPMEM_WORD_OFFSET(_w)		((_w) * 0x20)
-#define	CPMEM_DP_OFFSET(_d)		((_d) * 0x10000)
-#define	IMX_IPU_DP0		0
-#define	IMX_IPU_DP1		1
-#define	CPMEM_CHANNEL(_dp, _ch, _w)					\
-	    (CPMEM_DP_OFFSET(_dp) + CPMEM_CHANNEL_OFFSET(_ch) +		\
-		CPMEM_WORD_OFFSET(_w))
-#define	CPMEM_OFFSET(_dp, _ch, _w, _o)					\
-	    (CPMEM_CHANNEL((_dp), (_ch), (_w)) + (_o))
-
-#define IPUV3_DEBUG
-
-#ifdef IPUV3_DEBUG
-#define dprintf uprintf
-#else
-#define dprintf(...)
-#endif
 
 
 static int ipuv3_fb_probe(device_t);
@@ -268,14 +289,14 @@ ipuv3_dmfc_init(struct ipu3sc_softc *sc)
 	for (i = 0; i <= 0x34; i += 4)
 		uprintf("0x%08X = 0x%08X\n", i, IPUV3_READ(sc, dmfc, i));
 
-	uprintf("%s: DMFC_IC_CTRL         0x%08X\n", __func__,
-	    IPUV3_READ(sc, dmfc, IPU_DMFC_IC_CTRL));
-	uprintf("%s: IPU_DMFC_WR_CHAN     0x%08X\n", __func__,
-	    IPUV3_READ(sc, dmfc, IPU_DMFC_WR_CHAN));
-	uprintf("%s: IPU_DMFC_WR_CHAN_DEF 0x%08X\n", __func__,
-	    IPUV3_READ(sc, dmfc, IPU_DMFC_WR_CHAN_DEF));
-	uprintf("%s: IPU_DMFC_GENERAL1    0x%08X\n", __func__,
-	    IPUV3_READ(sc, dmfc, IPU_DMFC_GENERAL1));
+	debuglf("DMFC_IC_CTRL         0x%08X\n",
+		IPUV3_READ(sc, dmfc, IPU_DMFC_IC_CTRL));
+	debuglf("IPU_DMFC_WR_CHAN     0x%08X\n",
+		IPUV3_READ(sc, dmfc, IPU_DMFC_WR_CHAN));
+	debuglf("IPU_DMFC_WR_CHAN_DEF 0x%08X\n",
+	       IPUV3_READ(sc, dmfc, IPU_DMFC_WR_CHAN_DEF));
+	debuglf("IPU_DMFC_GENERAL1    0x%08X\n",
+	       IPUV3_READ(sc, dmfc, IPU_DMFC_GENERAL1));
 #endif
 }
 
@@ -308,14 +329,14 @@ ipuv3_dc_map_conf(struct ipu3sc_softc *sc,
 	reg &= ~(0xFFFF << (16 * ((map * 3 + byte) & 0x1)));
 	reg |= ((offset << 8) | mask) << (16 * ((map * 3 + byte) & 0x1));
 	IPUV3_WRITE(sc, dc, addr, reg);
-	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
+	debugf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
 
 	addr = IPU_DC_MAP_CONF_PNTR(map / 2);
 	reg = IPUV3_READ(sc, dc, addr);
 	reg &= ~(0x1F << ((16 * (map & 0x1)) + (5 * byte)));
 	reg |= ((map * 3) + byte) << ((16 * (map & 0x1)) + (5 * byte));
 	IPUV3_WRITE(sc, dc, addr, reg);
-	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
+	debugf("%s: addr 0x%08X reg 0x%08X\n", __func__, addr, reg);
 }
 
 static void
@@ -333,11 +354,11 @@ ipuv3_dc_template_command(struct ipu3sc_softc *sc,
 	    (mapping << 15) |
 	    (operand << 20);
 	IPUV3_WRITE(sc, dctmpl, index * 8, reg);
-	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8, reg);
+	debugf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8, reg);
 	reg = (opecode << 0) |
 	    (stop << 9);
 	IPUV3_WRITE(sc, dctmpl, index * 8 + 4, reg);
-	dprintf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8 + 4, reg);
+	debugf("%s: addr 0x%08X reg 0x%08X\n", __func__, index * 8 + 4, reg);
 }
 
 static void
@@ -352,8 +373,8 @@ ipuv3_set_routine_link(struct ipu3sc_softc *sc,
 	reg &= ~(0xFFFF << (16 * (evt & 0x1)));
 	reg |= ((addr << 8) | pri) << (16 * (evt & 0x1));
 	IPUV3_WRITE(sc, dc, IPU_DC_RL(base, evt), reg);
-	dprintf("%s: event %d addr %d priority %d\n", __func__, evt, addr, pri);
-	dprintf("%s: %p = 0x%08X\n", __func__, (void *)IPU_DC_RL(base, evt), reg);
+	debugf("%s: event %d addr %d priority %d\n", __func__, evt, addr, pri);
+	debugf("%s: %p = 0x%08X\n", __func__, (void *)IPU_DC_RL(base, evt), reg);
 }
 
 static void
@@ -439,12 +460,12 @@ ipuv3_di_sync_conf(struct ipu3sc_softc *sc, int no,
 	reg |= repeat << DI_STP_REP_SHIFT(no);
 	IPUV3_WRITE(sc, di0, IPU_DI_STP_REP(no), reg);
 
-	dprintf("%s: no %d\n", __func__, no);
-	dprintf("%s: addr 0x%08X reg_gen0   0x%08X\n", __func__,
+	debugf("%s: no %d\n", __func__, no);
+	debugf("%s: addr 0x%08X reg_gen0   0x%08X\n", __func__,
 	    IPU_DI_SW_GEN0(no), reg_gen0);
-	dprintf("%s: addr 0x%08X reg_gen1   0x%08X\n", __func__,
+	debugf("%s: addr 0x%08X reg_gen1   0x%08X\n", __func__,
 	    IPU_DI_SW_GEN1(no), reg_gen1);
-	dprintf("%s: addr 0x%08X DI_STP_REP 0x%08X\n", __func__,
+	debugf("%s: addr 0x%08X DI_STP_REP 0x%08X\n", __func__,
 	    IPU_DI_STP_REP(no), reg);
 }
 
@@ -495,9 +516,9 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 	IPUV3_WRITE(sc, di0, IPU_DI_BS_CLKGEN1,
 	    (div / 16) << DI_BS_CLKGEN1_DOWN_SHIFT);
 
-	dprintf("%s: IPU_DI_BS_CLKGEN0 = 0x%08X\n", __func__,
+	debugf("%s: IPU_DI_BS_CLKGEN0 = 0x%08X\n", __func__,
 	    IPUV3_READ(sc, di0, IPU_DI_BS_CLKGEN0));
-	dprintf("%s: IPU_DI_BS_CLKGEN1 = 0x%08X\n", __func__,
+	debugf("%s: IPU_DI_BS_CLKGEN1 = 0x%08X\n", __func__,
 	    IPUV3_READ(sc, di0, IPU_DI_BS_CLKGEN1));
 
 	/* Display Time settings */
@@ -505,14 +526,14 @@ imx51_ipuv3_di_init(struct ipu3sc_softc *sc)
 	    ((div / 16 - 1) << DI_DW_GEN_COMPONNENT_SIZE_SHIFT) |
 	    (3 << DI_DW_GEN_PIN_SHIFT(15));
 	IPUV3_WRITE(sc, di0, IPU_DI_DW_GEN(0), reg);
-	dprintf("%s: div = %d\n", __func__, div);
-	dprintf("%s: IPU_DI_DW_GEN(0) 0x%08X = 0x%08X\n", __func__,
+	debugf("%s: div = %d\n", __func__, div);
+	debugf("%s: IPU_DI_DW_GEN(0) 0x%08X = 0x%08X\n", __func__,
 	    IPU_DI_DW_GEN(0), reg);
 
 	/* Up & Down Data Wave Set */
 	reg = (div / 16 * 2) << DI_DW_SET_DOWN_SHIFT;
 	IPUV3_WRITE(sc, di0, IPU_DI_DW_SET(0, 3), reg);
-	dprintf("%s: IPU_DI_DW_SET(0, 3) 0x%08X = 0x%08X\n", __func__,
+	debugf("%s: IPU_DI_DW_SET(0, 3) 0x%08X = 0x%08X\n", __func__,
 	    IPU_DI_DW_SET(0, 3), reg);
 
 	/* internal HSCYNC */
@@ -588,18 +609,16 @@ ipuv3_geometry(struct ipu3sc_softc *sc,
 
 	sc->geometry = geom;
 
-	dprintf("%s: screen height = %d\n",__func__ , geom->panel_height);
-	dprintf("%s:        width  = %d\n",__func__ , geom->panel_width);
-	dprintf("%s: Pixel Clock = %d\n", __func__, geom->pixel_clk);
+	debugf("%s: screen height = %d\n",__func__ , geom->panel_height);
+	debugf("%s:        width  = %d\n",__func__ , geom->panel_width);
+	debugf("%s: Pixel Clock = %d\n", __func__, geom->pixel_clk);
 
 	imx51_ipuv3_di_init(sc);
 
-	dprintf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
+	debugf("%s: IPU_CM_DISP_GEN    : 0x%08X\n", __func__,
 	    IPUV3_READ(sc, cm, IPU_CM_DISP_GEN));
 
 	imx51_ipuv3_dc_display_config(sc, geom->panel_width);
-
-	return;
 }
 
 /*
@@ -831,10 +850,36 @@ ipuv3_write_dmaparam(struct ipu3sc_softc *sc,
 	for (i = 0; i < size; i++) {
 		IPUV3_WRITE(sc, cpmem, addr + ((i % 5) * 0x4) +
 		    ((i / 5) * 0x20), value[i]);
-		dprintf("%s: addr = 0x%08X, val = 0x%08X\n", __func__,
+		debugf("%s: addr = 0x%08X, val = 0x%08X\n", __func__,
 		    addr + ((i % 5) * 0x4) + ((i / 5) * 0x20),
 		    IPUV3_READ(sc, cpmem, addr + ((i % 5) * 0x4) +
 			((i / 5) * 0x20)));
+	}
+}
+
+/*
+ * The CPMEM holds the configuration parameters for each IDMAC channel. The
+ * CPMEM can hold the settings of 80 channels. Each IDMAC's channel's parameters
+ * are located on 2 CPMEM entries. Each Entry is 160 bit. The CPMEM is memory
+ * mapped and is accessible via the AHB bus. The AHB bus's accesses are 32bit
+ * wide. A CPMEM entry is composed of 5x32bit words. The next CPMEM entry starts
+ * at the next 8x32bit words (0x0, 0x20,0x40, etc.).
+ */
+static void
+ipuv3_read_dmaparam(struct ipu3sc_softc *sc,
+    int ch, uint32_t *out, int size)
+{
+	int i;
+	uint32_t base = ch * 0x40;
+	uint32_t val, addr;
+
+	for (i = 0; i < size; i++) {
+		addr = base + ((i % 5) * 0x4) + ((i / 5) * 0x20);
+		val = IPUV3_READ(sc, cpmem, addr);
+		debugf("addr = 0x%08X, val = 0x%08X\n", addr, val);
+
+		if (out != NULL)
+			out[i] = val;
 	}
 }
 
@@ -851,13 +896,10 @@ ipuv3_build_param(struct ipu3sc_softc *sc,
 	    (geom->panel_width - 1));
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_FH,
 	    (geom->panel_height - 1));
-#define TRY_MALLOC
-#ifdef TRY_MALLOC
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA0,
 	    sc->buf_base_phys >> 3);
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_EBA1,
 	    sc->buf_base_phys >> 3);
-#endif
 	ipuv3_set_idma_param(params, IDMAC_Ch_PARAM_SL,
 	    (scr->stride - 1));
 
@@ -933,7 +975,7 @@ ipuv3_set_idma_param(uint32_t *params, uint32_t name, uint32_t val)
 	shift = 32 - shift;
 
 	if (width > shift)
-		params[index+1] |= val >> shift;
+		params[index + 1] |= val >> shift;
 }
 
 /*
@@ -987,7 +1029,7 @@ ipuv3_start_dma(struct ipu3sc_softc *sc,
 	ipuv3_enable_display(sc);
 
 #ifdef IPUV3_DEBUG
-	ipuv3_dump(sc);
+	//ipuv3_dump(sc);
 #endif
 }
 
@@ -1039,11 +1081,10 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
     struct ipuv3_screen **scrpp)
 {
 	const struct lcd_panel_geometry *geometry;
-	struct ipuv3_screen *scr = NULL;
+	struct ipuv3_screen *scr;
 	int width, height;
 	bus_size_t size;
 	int error;
-	//void *fb;
 
 	uprintf("%s : %d\n", __func__, __LINE__);
 
@@ -1064,11 +1105,6 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	uprintf("create screen, size %lu\n", size);
 
-#ifdef USE_MALLOC
-	fb = malloc(size, M_DEVBUF, M_ZERO | M_NOWAIT);;
-	scr->segs[0].ds_addr = pmap_kextract(fb);
-
-#else
 	 /* XXX:
 	 * Actually we can handle nsegs>1 case by means
 	 * of multiple DMA descriptors for a panel. It
@@ -1110,19 +1146,17 @@ ipuv3_new_screen(struct ipu3sc_softc *sc, int depth,
 
 	 uprintf("DMA at %lX\n", sc->buf_base_phys);
 
-	 //return -1;
-#endif
 
-	dprintf("fb VA %p PA %lX\n", sc->buf_base, sc->buf_base_phys);
+	debugf("fb VA %p PA %lX\n", sc->buf_base, sc->buf_base_phys);
 
 
 	// XXX
 	sc->screen = scr;
 
-	dprintf("%s: screen buffer width  %d\n", __func__, width);
-	dprintf("%s: screen buffer height %d\n", __func__, height);
-	dprintf("%s: screen buffer depth  %d\n", __func__, depth);
-	dprintf("%s: screen buffer stride %d\n", __func__, scr->stride);
+	debugf("%s: screen buffer width  %d\n", __func__, width);
+	debugf("%s: screen buffer height %d\n", __func__, height);
+	debugf("%s: screen buffer depth  %d\n", __func__, depth);
+	debugf("%s: screen buffer stride %d\n", __func__, scr->stride);
 
 	// I hate this, leaking allocated data
 	*scrpp = scr;
@@ -1204,6 +1238,7 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 static void
 ipu3_fb_init(struct ipu3sc_softc *sc)
 {
+#if 0
 	static struct lcd_panel_geometry geom = {
 		.panel_width = 480,
 		.panel_height = 272,
@@ -1223,13 +1258,16 @@ ipu3_fb_init(struct ipu3sc_softc *sc)
 	ipuv3_initialize(sc, &geom);
 
 	uprintf("creating screen\n");
-	if (ipuv3_new_screen(sc, 32, &scr) != 0) {
+	if (ipuv3_new_screen(sc, 16, &scr) != 0) {
 		uprintf("screen init failed\n");
 		return;
 	}
 
 
 	ipuv3_start_dma(sc, scr);
+#endif
+	uint32_t params[10];
+	ipuv3_read_dmaparam(sc, 0, params, sizeof(params) / sizeof(params[0]));
 }
 
 
@@ -1261,21 +1299,54 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 }
 #endif
 
+
+static struct ipuv3_data ipuv3_data_imx51 =
+{
+	.cm_offset = 0x1e000000,
+	.idmac_offset = 0x1e008000,
+	.dp_offset = 0x1e018000,
+	.di0_offset = 0x1e040000,
+	.di1_offset = 0x1e048000,
+	.dctmpl_offset = 0x1f080000,
+	.dc_offset = 0x1e058000,
+	.dmfc_offset = 0x1e060000,
+	.cpmem_offset = 0x1f000000,
+};
+
+struct match {
+	char const *compatible;
+	struct ipuv3_data *data;
+};
+
+static struct match matches[] = {
+	{ .compatible = "fsl,ipu3", .data = &ipuv3_data_imx51 },
+	{}
+};
+
 static int
 ipuv3_fb_probe(device_t dev)
 {
+	struct ipu3sc_softc *sc;
+	struct match* match = matches;
 
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
-	if (!ofw_bus_is_compatible(dev, "fsl,ipu3") &&
-	    !ofw_bus_is_compatible(dev, "fsl,imx6q-ipu"))
-		return (ENXIO);
+	for (;;) {
+		if (ofw_bus_is_compatible(dev, match->compatible))
+			break;
+		match++;
+		if (!match->compatible)
+			 return (ENXIO);
+	}
 
+	sc = device_get_softc(dev);
+	sc->data = match->data;
 	device_set_desc(dev, "i.MX5x Image Processing Unit v3 (FB)");
 
 	return (BUS_PROBE_DEFAULT);
 }
+
 
 static int
 ipuv3_fb_attach(device_t dev)
@@ -1288,14 +1359,26 @@ ipuv3_fb_attach(device_t dev)
 	int err;
 	uintptr_t base;
 
-#if 0 // FIXME
-	if (bootverbose)
-		device_printf(dev, "clock gate status is %d\n",
-		    imx51_get_clk_gating(IMX51CLK_IPU_HSP_CLK_ROOT));
-#endif
-
 	sc->dev = dev;
 	sc->iot = iot = fdtbus_bs_tag;
+
+	/*
+	 * According to MCIMX51RM.pdf the base address of the IPUv3EX is
+	 * 4000 0000. The regions start with a framebuffer and the CM start
+	 * is mentioned to be at an offset of E000000, which should have been
+	 * 1E000000 I guess). which makes up the 0x5e000000 as mentioned below,
+	 * which is not the base address of the module. Linux uses 40000000 as
+	 * the base address.
+	 *
+	 * Imx53 seems to have the IPU v3M and CM registers at 1800_0000.
+	 * The CM module has offset 0x1E000000. From some reason the imx53.dtsi
+	 * only have the offset and lack the base.
+	 *
+	 * Imx6 has 0260_0000 as base. Linux uses 0x02400000 however. The 260_0000
+	 * Likewise ipu2 is set believed to be at 02800000, but documentation has
+	 * base. Since the manual changed to only use absolute addresses, it might
+	 * be a left over indicating that the actual base was 0x02400000.
+	 */
 
 	/*
 	 * Retrieve the device address based on the start address in the
@@ -1399,7 +1482,7 @@ ipuv3_fb_attach(device_t dev)
 		device_printf(dev, "Can't attach fbd device\n");
 #endif
 
-	ipuv3_dump(sc);
+	//ipuv3_dump(sc);
 
 	//return -1;
 
