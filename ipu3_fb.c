@@ -156,15 +156,15 @@ struct lcd_panel_geometry {
 };
 
 struct ipuv3_data {
-	bus_addr_t	cm_offset;
-	bus_addr_t	idmac_offset;
-	bus_addr_t	dp_offset;
-	bus_addr_t	di0_offset;
-	bus_addr_t	di1_offset;
-	bus_addr_t	dctmpl_offset;
-	bus_addr_t	dc_offset;
-	bus_addr_t	dmfc_offset;
-	bus_addr_t	cpmem_offset;
+	bus_addr_t	cm;
+	bus_addr_t	idmac;
+	bus_addr_t	dp;
+	bus_addr_t	di0;
+	bus_addr_t	di1;
+	bus_addr_t	dctmpl;
+	bus_addr_t	dc;
+	bus_addr_t	dmfc;
+	bus_addr_t	cpmem;
 };
 
 struct ipu3sc_softc {
@@ -172,7 +172,7 @@ struct ipu3sc_softc {
 	struct ipuv3_data	*data;
 
 	bus_space_tag_t		iot;
-	bus_space_handle_t	ioh;
+	//bus_space_handle_t	ioh;
 	bus_space_handle_t	cm_ioh;
 	bus_space_handle_t	dp_ioh;
 	bus_space_handle_t	di0_ioh;
@@ -1317,33 +1317,33 @@ ipu3_fb_init_cmap(uint32_t *cmap, int bytespp)
 
 static struct ipuv3_data ipuv3_data_imx51 =
 {
-	.cm_offset	= 0x1e000000,
-	.idmac_offset	= 0x1e008000,
-	.dp_offset	= 0x1e018000,
-	.di0_offset	= 0x1e040000,
-	.di1_offset	= 0x1e048000,
-	.dc_offset	= 0x1e058000,
-	.dmfc_offset	= 0x1e060000,
-	.cpmem_offset	= 0x1f000000, // XXX: 1000000 from cm_offset (6 zeros)
-	.dctmpl_offset	= 0x1f080000,
+	.cm		= 0x1e000000,
+	.idmac		= 0x1e008000,
+	.dp		= 0x1e018000,
+	.di0		= 0x1e040000,
+	.di1		= 0x1e048000,
+	.dc		= 0x1e058000,
+	.dmfc		= 0x1e060000,
+	.cpmem		= 0x1f000000, // XXX: 1000000 from cm_offset (6 zeros)
+	.dctmpl		= 0x1f080000,
 };
 
 static struct ipuv3_data ipuv3_data_imx6 =
 {
-	.cm_offset	= 0x200000,
-	.idmac_offset	= 0x208000,
-	.dp_offset	= 0x218000,
+	.cm		= 0x200000,
+	.idmac		= 0x208000,
+	.dp		= 0x218000,
 	/* 262_0000 IC Configuration Register (IPU1_IC_CONF) */
 	/* 263_0000 CSI0 Sensor Configuration Register (IPU1_CSI0_SENS_CONF) */
 	/* 263_8000 CSI1 Sensor Configuration Register (IPU1_CSI1_SENS_CONF) */
-	.di0_offset	= 0x240000,
-	.di1_offset	= 0x248000,
+	.di0		= 0x240000,
+	.di1		= 0x248000,
 	// 265_0000 SMFC Mapping Register (IPU1_SMFC_MAP)
-	.dc_offset	= 0x258000,
-	.dmfc_offset	= 0x260000,
+	.dc		= 0x258000,
+	.dmfc		= 0x260000,
 	/* 266_8000 VDI Field Size Register (IPU1_VDI_FSIZE) */
-	.cpmem_offset	= 0x300000, // 100000 from cm_offset (5 zeros)
-	.dctmpl_offset	= 0x380000
+	.cpmem		= 0x300000, // 100000 from cm_offset (5 zeros)
+	.dctmpl		= 0x380000
 };
 
 
@@ -1382,17 +1382,28 @@ ipuv3_fb_probe(device_t dev)
 	return (BUS_PROBE_DEFAULT);
 }
 
+//static int map
+
+static int
+map(struct ipu3sc_softc *sc, bus_addr_t address, bus_size_t size,
+    bus_space_handle_t *handlep)
+{
+	debugf("MAPPING: %lX size: %lX\n", address, size);
+
+	return bus_space_map(sc->iot, address, size, 0, handlep);
+}
 
 static int
 ipuv3_fb_attach(device_t dev)
 {
 	struct ipu3sc_softc *sc = device_get_softc(dev);
 	bus_space_tag_t iot;
-	bus_space_handle_t ioh;
+	//bus_space_handle_t ioh;
 	phandle_t node;
 	pcell_t reg;
 	int err;
-	uintptr_t base;
+	bus_addr_t base;
+	struct ipuv3_data * data = sc->data;
 
 	sc->dev = dev;
 	sc->iot = iot = fdtbus_bs_tag;
@@ -1422,6 +1433,8 @@ ipuv3_fb_attach(device_t dev)
 	 * the IPU device was memory mapped.
 	 * On i.MX53, the offset is 0.
 	 */
+
+	/*
 	node = ofw_bus_get_node(dev);
 	if ((OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0) {
 		base = 0;
@@ -1429,65 +1442,54 @@ ipuv3_fb_attach(device_t dev)
 		uprintf("got reg %X %X %X\n", reg,  fdt32_to_cpu(reg), IPU_CM_BASE(0));
 		base = fdt32_to_cpu(reg) - IPU_CM_BASE(0);
 	}
-
-	uprintf("base %X %x\n", base, IPU_CM_BASE(base));
+	*/
+	base = 2400000;
+	uprintf("base %lX\n", base);
 
 	/* map controller registers */
-	err = bus_space_map(iot, IPU_CM_BASE(base), IPU_CM_SIZE, 0, &ioh);
+	err = map(sc, base + data->cm, IPU_CM_SIZE, &sc->cm_ioh);
 	if (err)
 		goto fail_retarn_cm;
-	sc->cm_ioh = ioh;
 
 	/* map Display Multi FIFO Controller registers */
-	err = bus_space_map(iot, IPU_DMFC_BASE(base), IPU_DMFC_SIZE, 0, &ioh);
+	err = map(sc, base + data->dmfc, IPU_DMFC_SIZE, &sc->dmfc_ioh);
 	if (err)
 		goto fail_retarn_dmfc;
-	sc->dmfc_ioh = ioh;
 
 	/* map Display Interface 0 registers */
-	err = bus_space_map(iot, IPU_DI0_BASE(base), IPU_DI0_SIZE, 0, &ioh);
+	err = map(sc, base + data->di0, IPU_DI0_SIZE, &sc->di0_ioh);
 	if (err)
 		goto fail_retarn_di0;
-	sc->di0_ioh = ioh;
 
 	/* map Display Interface 1 registers */
-	err = bus_space_map(iot, IPU_DI1_BASE(base), IPU_DI0_SIZE, 0, &ioh);
+	err = map(sc, base + data->di0, IPU_DI0_SIZE, &sc->di1_ioh);
 	if (err)
 		goto fail_retarn_di1;
-	sc->di1_ioh = ioh;
 
 	/* map Display Processor registers */
-	err = bus_space_map(iot, IPU_DP_BASE(base), IPU_DP_SIZE, 0, &ioh);
+	err = map(sc, base + data->dp, IPU_DP_SIZE, &sc->dp_ioh);
 	if (err)
 		goto fail_retarn_dp;
-	sc->dp_ioh = ioh;
 
 	/* map Display Controller registers */
-	err = bus_space_map(iot, IPU_DC_BASE(base), IPU_DC_SIZE, 0, &ioh);
+	err = map(sc, base + data->dc, IPU_DC_SIZE, &sc->dc_ioh);
 	if (err)
 		goto fail_retarn_dc;
-	sc->dc_ioh = ioh;
 
 	/* map Image DMA Controller registers */
-	err = bus_space_map(iot, IPU_IDMAC_BASE(base), IPU_IDMAC_SIZE, 0,
-	    &ioh);
+	err = map(sc, base + data->idmac, IPU_IDMAC_SIZE, &sc->idmac_ioh);
 	if (err)
 		goto fail_retarn_idmac;
-	sc->idmac_ioh = ioh;
 
 	/* map CPMEM registers */
-	err = bus_space_map(iot, IPU_CPMEM_BASE(base), IPU_CPMEM_SIZE, 0,
-	    &ioh);
+	err = map(sc, base + data->cpmem, IPU_CPMEM_SIZE, &sc->cpmem_ioh);
 	if (err)
 		goto fail_retarn_cpmem;
-	sc->cpmem_ioh = ioh;
 
 	/* map DCTEMPL registers */
-	err = bus_space_map(iot, IPU_DCTMPL_BASE(base), IPU_DCTMPL_SIZE, 0,
-	    &ioh);
+	err = map(sc, base + data->dctmpl, IPU_DCTMPL_SIZE, &sc->dctmpl_ioh);
 	if (err)
 		goto fail_retarn_dctmpl;
-	sc->dctmpl_ioh = ioh;
 
 #ifdef notyet
 	sc->ih = imx51_ipuv3_intr_establish(IMX51_INT_IPUV3, IPL_BIO,
