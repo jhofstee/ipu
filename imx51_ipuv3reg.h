@@ -877,10 +877,12 @@
 #define	GPU_BASE	0x30000000
 #define	GPU_SIZE	0x10000000
 
-/* 
- * Image Processing Unit 
+/*
+ * Image Processing Unit
  *
- * All addresses are relative to the base SoC address. 
+ * XXX: These addresses are relative to the base SoC address
+ * on imx51. They are absolute addresses on an imx53 by luck
+ * and bogus values on an imx6.
  */
 #define	IPU_CM_BASE(_base)	((_base) + 0x1e000000)
 #define	IPU_CM_SIZE		0x8000
@@ -918,5 +920,46 @@
 #define	IPU_TPM_SIZE		0x20000
 #define	IPU_DCTMPL_BASE(_base)	((_base) + 0x1f080000)
 #define	IPU_DCTMPL_SIZE		0x20000
+
+/*
+ * offsets relative to the cm module, which itself is
+ * located at _SOC_OFFSET + CM_OFFSET, see below.
+ */
+#define	IPU_CM_CM_OFFSET	0x00000
+#define	IPU_IDMAC_CM_OFFSET	0x08000
+#define	IPU_DP_CM_OFFSET	0x18000
+#define	IPU_IC_CM_OFFSET	0x20000
+#define	IPU_IRT_CM_OFFSET	0x28000
+#define	IPU_CSI0_CM_OFFSET	0x30000
+#define	IPU_CSI1_CM_OFFSET	0x38000
+#define	IPU_DI0_CM_OFFSET	0x40000
+#define	IPU_DI1_CM_OFFSET	0x48000
+#define	IPU_SMFC_CM_OFFSET	0x50000
+#define	IPU_DC_CM_OFFSET	0x58000
+#define	IPU_DMFC_CM_OFFSET	0x60000
+#define	IPU_VDI_CM_OFFSET	0x68000
+
+/*
+ * offsets relative to the cpmem module, which itself
+ * is located at _SOC_OFFSET + _CPMEM_OFFSET
+ */
+#define	IPU_CPMEM_CPMEM_OFFSET	0x00000
+#define IPU_LUT_CPMEM_OFFSET	0x20000
+#define	IPU_SRM_CPMEM_OFFSET	0x40000
+#define	IPU_TPM_CPMEM_OFFSET	0x60000
+#define	IPU_DCTMPL_CPMEM_OFFSET	0x80000
+
+/* SOC dependend offset */
+#define IPU1_IMX51_SOC_OFFSET	0x40000000
+#define IPU1_IMX51_CM_OFFSET	0x1e000000
+#define IPU1_IMX51_CPMEM_OFFSET	0x1f000000
+
+#define IPU1_IMX53_SOC_OFFSET	0x18000000
+#define IPU1_IMX53_CM_OFFSET	0x06000000
+#define IPU1_IMX53_CPMEM_OFFSET	0x07000000
+
+#define IPU1_IMX6_SOC_OFFSET	0x02400000
+#define IPU1_IMX6_CM_OFFSET	0x00200000
+#define IPU1_IMX6_CPMEM_OFFSET	0x00300000
 
 #endif /* _ARM_IMX_IMX51_IPUV3REG_H */

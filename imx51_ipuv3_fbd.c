@@ -71,11 +71,11 @@ __FBSDID("$FreeBSD$");
 
 #include <arm/freescale/imx/imx51_ccmvar.h>
 
-#include <arm/freescale/imx/imx51_ipuv3reg.h>
+// XXX
+#include "imx51_ipuv3reg.h"
+//#include <arm/freescale/imx/imx51_ipuv3reg.h>
 
 #include "fb_if.h"
-
-#define	IMX51_IPU_HSP_CLOCK	665000000
 
 struct ipu3sc_softc {
 	device_t		dev;
@@ -95,8 +95,6 @@ struct ipu3sc_softc {
 	bus_space_handle_t	cpmem_ioh;
 };
 
-static struct ipu3sc_softc *ipu3sc_softc;
-
 #define	IPUV3_READ(ipuv3, module, reg)					\
 	bus_space_read_4((ipuv3)->iot, (ipuv3)->module##_ioh, (reg))
 #define	IPUV3_WRITE(ipuv3, module, reg, val)				\
@@ -113,9 +111,42 @@ static struct ipu3sc_softc *ipu3sc_softc;
 #define	CPMEM_OFFSET(_dp, _ch, _w, _o)					\
 	    (CPMEM_CHANNEL((_dp), (_ch), (_w)) + (_o))
 
+enum IPUV3_SUBMODULES {
+	IPUV3_CM,
+	IPUV3_IDMAC,
+	IPUV3_DP,
+	IPUV3_IC,
+	IPUV3_IRT,
+	IPUV3_CSI0,
+	IPUV3_CSI1,
+	IPUV3_DI0,
+	IPUV3_DI1,
+	IPUV3_SMFC,
+	IPUV3_DC,
+	IPUV3_DMFC,
+	IPUV3_VDI,
+	IPUV3_CPMEM,
+	IPUV3_LUT,
+	IPUV3_SRM,
+	IPUV3_TPM,
+	IPUV3_DCTMPL,
+	IPUV3_SUBMODULES_COUNT
+};
+
+struct submodule_info
+{
+	char *name;
+	bus_addr_t addr;
+	bus_addr_t size;
+	bus_space_handle_t *ioh;
+};
+
+
 static int	ipu3_fb_probe(device_t);
 static int	ipu3_fb_attach(device_t);
+static int	ipu3_fb_detach(device_t);
 
+/* XXX: read the configuration from u-boot and allocate a similiar fb */
 static void
 ipu3_fb_init(struct ipu3sc_softc *sc)
 {
@@ -187,104 +218,157 @@ ipu3_fb_probe(device_t dev)
 	if (!ofw_bus_status_okay(dev))
 		return (ENXIO);
 
-	if (!ofw_bus_is_compatible(dev, "fsl,ipu3"))
+	if (!ofw_bus_is_compatible(dev, "fsl,ipu3") &&
+		!ofw_bus_is_compatible(dev, "fsl,imx6q-ipu"))
 		return (ENXIO);
 
-	device_set_desc(dev, "i.MX5x Image Processing Unit v3 (FB)");
+	device_set_desc(dev, "i.MX Image Processing Unit v3 (FB)");
 
 	return (BUS_PROBE_DEFAULT);
 }
+
+static void
+ipu3_set_addresses(struct submodule_info *modules, bus_addr_t base,
+			 bus_addr_t cm_offset, bus_addr_t cpmem_offset)
+{
+	bus_addr_t cm_addr;
+	bus_addr_t cpmem_addr;
+
+	/*
+	 * The base address and offset of the rigisters from the base
+	 * depend on the SOC.
+	 */
+	cm_addr = base + cm_offset;
+	modules[IPUV3_CM].addr = cm_addr + IPU_CM_CM_OFFSET;
+	modules[IPUV3_IDMAC].addr = cm_addr + IPU_IDMAC_CM_OFFSET;
+	modules[IPUV3_DP].addr = cm_addr + IPU_DP_CM_OFFSET;
+	modules[IPUV3_IC].addr = cm_addr + IPU_IC_CM_OFFSET;
+	modules[IPUV3_IRT].addr = cm_addr + IPU_IRT_CM_OFFSET;
+	modules[IPUV3_CSI0].addr = cm_addr + IPU_CSI0_CM_OFFSET;
+	modules[IPUV3_CSI1].addr = cm_addr + IPU_CSI1_CM_OFFSET;
+	modules[IPUV3_DI0].addr = cm_addr + IPU_DI0_CM_OFFSET;
+	modules[IPUV3_DI1].addr = cm_addr + IPU_DI1_CM_OFFSET;
+	modules[IPUV3_SMFC].addr = cm_addr + IPU_SMFC_CM_OFFSET;
+	modules[IPUV3_DC].addr = cm_addr + IPU_DC_CM_OFFSET;
+	modules[IPUV3_DMFC].addr = cm_addr + IPU_DMFC_CM_OFFSET;
+	modules[IPUV3_VDI].addr = cm_addr + IPU_VDI_CM_OFFSET;
+
+	/*
+	 * cpmem relative, this differs between imx51, imx53 on one hand
+	 * the imx6 on the other side.
+	 */
+	cpmem_addr = base + cpmem_offset;
+	modules[IPUV3_CPMEM].addr = cpmem_addr + IPU_CPMEM_CPMEM_OFFSET;
+	modules[IPUV3_LUT].addr = cpmem_addr + IPU_LUT_CPMEM_OFFSET;
+	modules[IPUV3_SRM].addr = cpmem_addr + IPU_SRM_CPMEM_OFFSET;
+	modules[IPUV3_TPM].addr = cpmem_addr + IPU_TPM_CPMEM_OFFSET;
+	modules[IPUV3_DCTMPL].addr = cpmem_addr + IPU_DCTMPL_CPMEM_OFFSET;
+}
+
+static void
+ipu3_dump_submodule_info(struct submodule_info *modules, size_t count)
+{
+	struct submodule_info *mod = modules;
+	size_t i;
+
+	for (i = 0; i < count; i++) {
+		uprintf("%10s %lX %lX\n", mod->name, mod->addr, mod->size);
+		mod++;
+	}
+
+}
+
+// XXX: is there no common type for this?
+struct arm32_regs {
+	pcell_t phys;
+	pcell_t size;
+};
 
 static int
 ipu3_fb_attach(device_t dev)
 {
 	struct ipu3sc_softc *sc = device_get_softc(dev);
-	bus_space_tag_t iot;
-	bus_space_handle_t ioh;
 	phandle_t node;
-	pcell_t reg;
- 	int err;
+	struct arm32_regs *regs;
+	int err;
 	uintptr_t base;
+	struct submodule_info *mod;
+	size_t i;
+	struct submodule_info mods[] = {
+		{.name = "CM", .size = IPU_CM_SIZE, .ioh = &sc->cm_ioh},
+		{.name = "IDMAC", .size = IPU_DMFC_SIZE, .ioh = &sc->idmac_ioh},
+		{.name = "DP", .size = IPU_DP_SIZE, .ioh = &sc->dp_ioh},
+		{.name = "IC", .size = IPU_IC_SIZE, .ioh = NULL},
+		{.name = "IRT", .size = IPU_IRT_SIZE, .ioh = NULL},
+		{.name = "CSIO", .size = IPU_CSI0_SIZE, .ioh = NULL},
+		{.name = "CSI1", .size = IPU_CSI1_SIZE, .ioh = NULL},
+		{.name = "DIO0", .size = IPU_DI0_SIZE, .ioh = &sc->di0_ioh},
+		{.name = "DIO1", .size = IPU_DI1_SIZE, .ioh = &sc->di1_ioh},
+		{.name = "SMFC", .size = IPU_SMFC_SIZE, .ioh = NULL},
+		{.name = "DC", .size = IPU_DC_SIZE, .ioh = &sc->dc_ioh},
+		{.name = "DMFC", .size = IPU_DMFC_SIZE, .ioh = &sc->dmfc_ioh},
+		{.name = "VDI", .size = IPU_VDI_SIZE, .ioh = NULL},
+		{.name = "CPMEM", .size = IPU_CPMEM_SIZE, .ioh = &sc->cpmem_ioh},
+		{.name = "LUT", .size = IPU_LUT_SIZE, .ioh = NULL},
+		{.name = "SRM", .size = IPU_SRM_SIZE, .ioh = NULL},
+		{.name = "TPM", .size = IPU_TPM_SIZE, .ioh = NULL},
+		{.name = "DCTMPL", .size = IPU_DCTMPL_SIZE, .ioh = &sc->dctmpl_ioh},
+	};
+	int mod_count = sizeof(mods) / sizeof(mods[0]);
+	int nregs;
 
-	ipu3sc_softc = sc;
+	sc->dev = dev;
+	sc->iot = fdtbus_bs_tag;
 
+#if 0
 	if (bootverbose)
 		device_printf(dev, "clock gate status is %d\n",
 		    imx51_get_clk_gating(IMX51CLK_IPU_HSP_CLK_ROOT));
+#endif
+	uprintf("ipu3_fb_attach\n");
 
-	sc->dev = dev;
-
-	sc = device_get_softc(dev);
-	sc->iot = iot = fdtbus_bs_tag;
-
-	/*
-	 * Retrieve the device address based on the start address in the
-	 * DTS.  The DTS for i.MX51 specifies 0x5e000000 as the first register
-	 * address, so we just subtract IPU_CM_BASE to get the offset at which
-	 * the IPU device was memory mapped.
-	 * On i.MX53, the offset is 0.
-	 */
 	node = ofw_bus_get_node(dev);
-	if ((OF_getprop(node, "reg", &reg, sizeof(reg))) <= 0)
-		base = 0;
-	else
-		base = fdt32_to_cpu(reg) - IPU_CM_BASE(0);
-	/* map controller registers */
-	err = bus_space_map(iot, IPU_CM_BASE(base), IPU_CM_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_cm;
-	sc->cm_ioh = ioh;
+	nregs = OF_getprop_alloc(node, "reg", sizeof(*regs), (void **)&regs);
+	if (nregs <= 0) {
+		uprintf("obtaining reg failed");
+		return (ENXIO);
+	}
 
-	/* map Display Multi FIFO Controller registers */
-	err = bus_space_map(iot, IPU_DMFC_BASE(base), IPU_DMFC_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_dmfc;
-	sc->dmfc_ioh = ioh;
+	if (nregs != 1 && nregs < mod_count) {
+		free(regs, M_OFWPROP);
+		uprintf("either the base address are all submodule registers must be provided!");
+		return (ENXIO);
+	}
 
-	/* map Display Interface 0 registers */
-	err = bus_space_map(iot, IPU_DI0_BASE(base), IPU_DI0_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_di0;
-	sc->di0_ioh = ioh;
+	if (nregs == 1) {
+		uprintf("single reg given, assuming base address\n");
+		// XXX: make this SOC specific
+		ipu3_set_addresses(mods, fdt32_to_cpu(regs[i].phys), 0x200000, 0x300000);
+	} else {
+		uprintf("all regs given, parsing\n");
+		for (i = 0; i < mod_count; i++) {
+			mods[i].addr = fdt32_to_cpu(regs[i].phys);
+			mods[i].size = fdt32_to_cpu(regs[i].size);
+		}
+	}
+	free(regs, M_OFWPROP);
 
-	/* map Display Interface 1 registers */
-	err = bus_space_map(iot, IPU_DI1_BASE(base), IPU_DI0_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_di1;
-	sc->di1_ioh = ioh;
+	uprintf("count: %d\n", nregs);
+	ipu3_dump_submodule_info(mods, mod_count);
 
-	/* map Display Processor registers */
-	err = bus_space_map(iot, IPU_DP_BASE(base), IPU_DP_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_dp;
-	sc->dp_ioh = ioh;
+	mod = mods;
+	for (i = 0; i < mod_count; i++, mod++) {
+		if (mod->ioh == NULL)
+			continue;
 
-	/* map Display Controller registers */
-	err = bus_space_map(iot, IPU_DC_BASE(base), IPU_DC_SIZE, 0, &ioh);
-	if (err)
-		goto fail_retarn_dc;
-	sc->dc_ioh = ioh;
+		uprintf("mapping %s\n", mod->name);
 
-	/* map Image DMA Controller registers */
-	err = bus_space_map(iot, IPU_IDMAC_BASE(base), IPU_IDMAC_SIZE, 0,
-	    &ioh);
-	if (err)
-		goto fail_retarn_idmac;
-	sc->idmac_ioh = ioh;
-
-	/* map CPMEM registers */
-	err = bus_space_map(iot, IPU_CPMEM_BASE(base), IPU_CPMEM_SIZE, 0,
-	    &ioh);
-	if (err)
-		goto fail_retarn_cpmem;
-	sc->cpmem_ioh = ioh;
-
-	/* map DCTEMPL registers */
-	err = bus_space_map(iot, IPU_DCTMPL_BASE(base), IPU_DCTMPL_SIZE, 0,
-	    &ioh);
-	if (err)
-		goto fail_retarn_dctmpl;
-	sc->dctmpl_ioh = ioh;
+		/* map controller registers */
+		err = bus_space_map(sc->iot, mod->addr, mod->size, 0,
+				    mod->ioh);
+		if (err)
+			goto fail;
+	}
 
 #ifdef notyet
 	sc->ih = imx51_ipuv3_intr_establish(IMX51_INT_IPUV3, IPL_BIO,
@@ -297,10 +381,6 @@ ipu3_fb_attach(device_t dev)
 	}
 #endif
 
-	/*
-	 * We have to wait until interrupts are enabled. 
-	 * Mailbox relies on it to get data from VideoCore
-	 */
 	ipu3_fb_init(sc);
 
 	sc->sc_info.fb_name = device_get_nameunit(dev);
@@ -315,26 +395,22 @@ ipu3_fb_attach(device_t dev)
 
 	return (bus_generic_attach(dev));
 
-fail_retarn_dctmpl:
-	bus_space_unmap(sc->iot, sc->cpmem_ioh, IPU_CPMEM_SIZE);
-fail_retarn_cpmem:
-	bus_space_unmap(sc->iot, sc->idmac_ioh, IPU_IDMAC_SIZE);
-fail_retarn_idmac:
-	bus_space_unmap(sc->iot, sc->dc_ioh, IPU_DC_SIZE);
-fail_retarn_dp:
-	bus_space_unmap(sc->iot, sc->dp_ioh, IPU_DP_SIZE);
-fail_retarn_dc:
-	bus_space_unmap(sc->iot, sc->di1_ioh, IPU_DI1_SIZE);
-fail_retarn_di1:
-	bus_space_unmap(sc->iot, sc->di0_ioh, IPU_DI0_SIZE);
-fail_retarn_di0:
-	bus_space_unmap(sc->iot, sc->dmfc_ioh, IPU_DMFC_SIZE);
-fail_retarn_dmfc:
-	bus_space_unmap(sc->iot, sc->dc_ioh, IPU_CM_SIZE);
-fail_retarn_cm:
-	device_printf(sc->dev,
-	    "failed to map registers (errno=%d)\n", err);
+fail:
+	device_printf(sc->dev, "failed to map registers (%s, errno=%d)\n",
+		      mod->name, err);
+
+	mod--;
+	while (mod != mods)
+		if (mod->ioh)
+			bus_space_unmap(sc->iot, *mod->ioh, mod->size);
+
 	return (err);
+}
+
+static int
+ipu3_fb_detach(device_t dev)
+{
+	return (0);
 }
 
 static struct fb_info *
@@ -349,6 +425,7 @@ static device_method_t ipu3_fb_methods[] = {
 	/* Device interface */
 	DEVMETHOD(device_probe,		ipu3_fb_probe),
 	DEVMETHOD(device_attach,	ipu3_fb_attach),
+	DEVMETHOD(device_detach,	ipu3_fb_detach),
 
 	/* Framebuffer service methods */
 	DEVMETHOD(fb_getinfo,		ipu3_fb_getinfo),
