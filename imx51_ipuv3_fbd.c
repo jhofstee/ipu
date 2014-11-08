@@ -291,7 +291,6 @@ ipu3_fb_attach(device_t dev)
 	phandle_t node;
 	struct arm32_regs *regs;
 	int err;
-	uintptr_t base;
 	struct submodule_info *mod;
 	size_t i;
 	struct submodule_info mods[] = {
@@ -343,7 +342,7 @@ ipu3_fb_attach(device_t dev)
 	if (nregs == 1) {
 		uprintf("single reg given, assuming base address\n");
 		// XXX: make this SOC specific
-		ipu3_set_addresses(mods, fdt32_to_cpu(regs[i].phys), 0x200000, 0x300000);
+		ipu3_set_addresses(mods, fdt32_to_cpu(regs[0].phys), 0x200000, 0x300000);
 	} else {
 		uprintf("all regs given, parsing\n");
 		for (i = 0; i < mod_count; i++) {
@@ -393,7 +392,14 @@ ipu3_fb_attach(device_t dev)
 	if (sc->sc_fbd == NULL)
 		device_printf(dev, "Can't attach fbd device\n");
 
-	return (bus_generic_attach(dev));
+	err = bus_generic_attach(dev);
+	if (err) {
+		uprintf("bus_generic_attach error %d\n", err);
+		return err;
+	}
+
+	uprintf("made it\n");
+	return (0);
 
 fail:
 	device_printf(sc->dev, "failed to map registers (%s, errno=%d)\n",
